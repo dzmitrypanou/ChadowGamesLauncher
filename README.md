@@ -1,8 +1,10 @@
 # Chadow Games Launcher
 
-Десктоп-лаунчер Minecraft Java Edition для [Chadow Games](https://chadow.ru). Собран на Tauri 2 (Rust + Vite), UI в фирменном стиле chadow.ru.
+Десктоп-лаунчер Minecraft Java Edition для проекта [CHADOW](https://chadow.ru). 
 
-**Версия:** 3.2.2 Creeper
+Собран на Tauri 2 (Rust + Vite), UI в фирменном стиле chadow.ru.
+
+**Версия:** 0.6.8 Obsidian
 
 ## Возможности
 
@@ -134,10 +136,6 @@ Bootstrap API отдаёт:
 - параметры пробуждения сервера
 
 После сборки ZIP загрузите архив в админку и укажите хеш в bootstrap.
-
-## Dev-режим
-
-В настройках лаунчера можно включить **Dev mode** — тогда bootstrap загружается с `https://test.chadow.ru/api/minecraft/bootstrap` вместо prod.
 
 ## Стек
 
