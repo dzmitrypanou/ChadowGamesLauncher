@@ -1,10 +1,24 @@
 node_modules/
 dist/
 src-tauri/target/
-reference-client/.cache/
 
-# Local launcher state — backup lives in reference-client/
+# Synced Minecraft client payload (scripts/sync-reference-client.ps1)
+reference-client/
+
+# Gradle build artifacts
+client-mod/build/
+client-mod/.gradle/
+
+# Runtime logs
+logs/
+src-tauri/logs/
+*.log
+
+# Local launcher state
 profile.json
 launcher.log
 minecraft-game.log
 bootstrap-cache.json
+
+# Decompiled MC sources (IDE reference only)
+net/
