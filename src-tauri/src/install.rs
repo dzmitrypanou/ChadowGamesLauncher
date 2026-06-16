@@ -210,7 +210,7 @@ fn write_applied_client_pack_sha256(root: &Path, version: &str, sha256: &str) ->
     fs::write(path, sha256).map_err(|e| e.to_string())
 }
 
-fn client_pack_needs_update(root: &Path, version: &str, pack: &ClientPack) -> bool {
+pub(crate) fn client_pack_needs_update(root: &Path, version: &str, pack: &ClientPack) -> bool {
     if pack.version != version || pack.url.trim().is_empty() {
         return false;
     }

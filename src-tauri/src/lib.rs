@@ -5,14 +5,14 @@ mod launch;
 mod ping;
 mod profile;
 
-use install::{collect_classpath, ensure_java, ensure_minecraft, ClientPack};
+use install::{client_pack_needs_update, collect_classpath, ensure_java, ensure_minecraft, ClientPack};
 use launch::{is_game_running, launch_game, pick_launch_server};
 use ping::PingResult;
 use profile::{
     cache_bootstrap as persist_bootstrap_cache, clear_all_data as wipe_launcher_data,
     ensure_dirs, ensure_game_install_dirs, game_install_path_info,
     load_cached_bootstrap as read_bootstrap_cache, load_profile as read_profile,
-    save_profile as write_profile, set_game_install_path, GameInstallPathInfo, Profile,
+    relocate_game_install_path, save_profile as write_profile, GameInstallPathInfo, Profile,
 };
 use serde_json::Value;
 use tauri::AppHandle;
@@ -53,11 +53,67 @@ fn get_game_install_path(game_id: String) -> GameInstallPathInfo {
 }
 
 #[tauri::command]
-fn set_game_install_path_cmd(game_id: String, path: Option<String>) -> Result<(), String> {
+fn client_pack_update_needed(
+    game_id: String,
+    minecraft_version: String,
+    client_pack: Option<ClientPack>,
+) -> Result<bool, String> {
+    if game_id != MINECRAFT_GAME_ID {
+        return Ok(false);
+    }
+
+    let install_root = ensure_game_install_dirs(&game_id)?;
+    let version_dir = install_root.join("versions").join(&minecraft_version);
+    let jar_path = version_dir.join(format!("{minecraft_version}.jar"));
+    let json_path = version_dir.join(format!("{minecraft_version}.json"));
+
+    if !jar_path.exists() || !json_path.exists() {
+        return Ok(false);
+    }
+
+    Ok(match client_pack.as_ref() {
+        Some(pack) => client_pack_needs_update(&install_root, &minecraft_version, pack),
+        None => false,
+    })
+}
+
+#[tauri::command]
+async fn set_game_install_path_cmd(
+    app: AppHandle,
+    game_id: String,
+    path: Option<String>,
+    bootstrap: Option<Value>,
+) -> Result<(), String> {
     if is_game_running() {
         return Err("Закройте игру перед сменой папки установки".to_string());
     }
-    set_game_install_path(&game_id, path)
+    let install_root = relocate_game_install_path(&game_id, path)?;
+
+    if game_id == MINECRAFT_GAME_ID {
+        if let Some(raw_bootstrap) = bootstrap {
+            if let Ok(config) = serde_json::from_value::<BootstrapInput>(raw_bootstrap) {
+                if config.enabled {
+                    let version = config.minecraft_version;
+                    let client_pack = config.client_pack.as_ref();
+                    let _ = ensure_minecraft(
+                        &app,
+                        &install_root,
+                        &version,
+                        client_pack,
+                        |percent, message| {
+                            let _ = app.emit(
+                                "install-progress",
+                                serde_json::json!({ "percent": percent, "message": message }),
+                            );
+                        },
+                    )
+                    .await?;
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -103,6 +159,7 @@ async fn prepare_and_launch(
     }
 
     ensure_dirs()?;
+    let profile = read_profile();
     let install_root = ensure_game_install_dirs(&game_id)?;
 
     let emit = |percent: u8, message: &str| {
@@ -142,6 +199,7 @@ async fn prepare_and_launch(
         DEFAULT_RAM_GB,
         &install_root,
         server.as_ref(),
+        profile.display_mode,
     )?;
 
     Ok(LaunchResult { launched: true })
@@ -172,6 +230,7 @@ pub fn run() {
             load_profile,
             save_profile,
             get_game_install_path,
+            client_pack_update_needed,
             set_game_install_path_cmd,
             cache_bootstrap,
             load_cached_bootstrap,

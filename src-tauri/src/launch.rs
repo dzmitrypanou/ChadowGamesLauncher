@@ -1,5 +1,5 @@
 use crate::install::VersionDetails;
-use crate::profile::launcher_root;
+use crate::profile::{launcher_root, DisplayMode};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -211,11 +211,60 @@ fn resolve_args(
     out
 }
 
-fn launch_features(server: Option<&(String, u16)>) -> HashMap<&'static str, bool> {
+fn primary_screen_size(app: &AppHandle) -> (u32, u32) {
+    app.primary_monitor()
+        .ok()
+        .flatten()
+        .map(|monitor| {
+            let area = monitor.work_area();
+            (area.size.width, area.size.height)
+        })
+        .unwrap_or((1920, 1080))
+}
+
+fn set_game_option(lines: &mut Vec<String>, key: &str, value: &str) {
+    let prefix = format!("{key}:");
+    if let Some(line) = lines.iter_mut().find(|line| line.starts_with(&prefix)) {
+        *line = format!("{key}:{value}");
+    } else {
+        lines.push(format!("{key}:{value}"));
+    }
+}
+
+fn apply_fullscreen_option(game_dir: &Path, fullscreen: bool) -> Result<(), String> {
+    let path = game_dir.join("options.txt");
+    let mut lines: Vec<String> = if path.exists() {
+        std::fs::read_to_string(&path)
+            .map_err(|e| e.to_string())?
+            .lines()
+            .map(ToString::to_string)
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    set_game_option(
+        &mut lines,
+        "fullscreen",
+        if fullscreen { "true" } else { "false" },
+    );
+
+    let contents = if lines.is_empty() {
+        format!("fullscreen:{}", fullscreen)
+    } else {
+        lines.join("\n")
+    };
+    std::fs::write(path, contents).map_err(|e| e.to_string())
+}
+
+fn launch_features(
+    server: Option<&(String, u16)>,
+    custom_resolution: bool,
+) -> HashMap<&'static str, bool> {
     let quick_multiplayer = server.is_some();
     HashMap::from([
         ("is_demo_user", false),
-        ("has_custom_resolution", false),
+        ("has_custom_resolution", custom_resolution),
         ("has_quick_plays_support", false),
         ("is_quick_play_singleplayer", false),
         ("is_quick_play_multiplayer", quick_multiplayer),
@@ -279,6 +328,7 @@ pub fn launch_game(
     ram_gb: u32,
     install_root: &Path,
     server: Option<&(String, u16)>,
+    display_mode: DisplayMode,
 ) -> Result<(), String> {
     if is_game_running() {
         return Err("Игра уже запущена".to_string());
@@ -291,6 +341,14 @@ pub fn launch_game(
     std::fs::create_dir_all(&game_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&assets_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&natives).map_err(|e| e.to_string())?;
+
+    let fullscreen = display_mode == DisplayMode::Fullscreen;
+    let window_size = if fullscreen {
+        None
+    } else {
+        Some(primary_screen_size(app))
+    };
+    apply_fullscreen_option(&game_dir, fullscreen)?;
 
     let uuid = offline_uuid(username);
     let access_token = uuid.clone();
@@ -313,8 +371,11 @@ pub fn launch_game(
     vars.insert("auth_xuid", String::new());
     vars.insert("clientid", String::new());
     vars.insert("version_type", "release".to_string());
-    vars.insert("resolution_width", String::new());
-    vars.insert("resolution_height", String::new());
+    let (resolution_width, resolution_height) = window_size
+        .map(|(width, height)| (width.to_string(), height.to_string()))
+        .unwrap_or_default();
+    vars.insert("resolution_width", resolution_width);
+    vars.insert("resolution_height", resolution_height);
     vars.insert("quickPlayPath", String::new());
     vars.insert("quickPlaySingleplayer", String::new());
     vars.insert(
@@ -325,7 +386,7 @@ pub fn launch_game(
     );
     vars.insert("quickPlayRealms", String::new());
 
-    let features = launch_features(server);
+    let features = launch_features(server, window_size.is_some());
 
     let mut cmd = Command::new(java_exe);
     if let Some(java_home) = java_exe.parent().and_then(|bin| bin.parent()) {
@@ -370,6 +431,7 @@ pub fn launch_game(
             &details.asset_index.id,
             &vars["auth_uuid"],
             server,
+            window_size,
         ) {
             cmd.arg(arg);
         }
@@ -467,6 +529,7 @@ fn legacy_game_args(
     asset_index: &str,
     uuid: &str,
     server: Option<&(String, u16)>,
+    window_size: Option<(u32, u32)>,
 ) -> Vec<String> {
     let mut args = vec![
         "--username".into(),
@@ -488,6 +551,13 @@ fn legacy_game_args(
         "--versionType".into(),
         "release".into(),
     ];
+
+    if let Some((width, height)) = window_size {
+        args.push("--width".into());
+        args.push(width.to_string());
+        args.push("--height".into());
+        args.push(height.to_string());
+    }
 
     if let Some((host, port)) = server {
         args.push("--quickPlayMultiplayer".into());

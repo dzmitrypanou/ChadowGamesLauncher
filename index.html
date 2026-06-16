@@ -114,6 +114,21 @@
           </button>
         </div>
         <div class="settings-modal-body">
+          <div class="settings-display-section">
+            <p class="field-label">Режим запуска</p>
+            <p class="settings-hint">В окне — размер под ваш экран, без маленького окна по умолчанию.</p>
+            <div class="display-mode-options" role="radiogroup" aria-label="Режим запуска">
+              <label class="display-mode-option">
+                <input type="radio" name="displayMode" value="windowed" checked />
+                <span>В окне</span>
+              </label>
+              <label class="display-mode-option">
+                <input type="radio" name="displayMode" value="fullscreen" />
+                <span>Полный экран</span>
+              </label>
+            </div>
+          </div>
+          <div class="settings-divider"></div>
           <div class="settings-install-section">
             <p class="field-label">Папки установки</p>
             <p class="settings-hint">Для каждой игры можно указать свою папку. Java всегда хранится в данных лаунчера.</p>

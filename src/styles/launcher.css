@@ -772,8 +772,37 @@
 
 .settings-divider {
   height: 1px;
-  margin: 18px 0;
+  margin: 16px 0;
   background: rgba(97, 140, 197, 0.18);
+}
+
+.display-mode-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.display-mode-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(97, 140, 197, 0.28);
+  background: rgba(12, 22, 42, 0.72);
+  color: #c5daf1;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.display-mode-option:has(input:checked) {
+  border-color: var(--ui-accent);
+  background: rgba(30, 51, 89, 0.92);
+  color: #dff0ff;
+}
+
+.display-mode-option input {
+  accent-color: var(--ui-accent);
 }
 
 .install-paths-list {

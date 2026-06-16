@@ -10,7 +10,10 @@ const DEFAULT_API = 'https://chadow.ru/api/minecraft/bootstrap';
 const MINECRAFT_NICK_MAX = 16;
 
 const PLAY_LABEL_IDLE = 'Играть';
+const PLAY_LABEL_UPDATE = 'Обновить';
 const PLAY_LABEL_RUNNING = 'Запущено';
+const DISPLAY_MODE_WINDOWED = 'windowed';
+const DISPLAY_MODE_FULLSCREEN = 'fullscreen';
 
 /** Games shown before API support exists */
 const PLACEHOLDER_GAMES = [
@@ -74,6 +77,27 @@ let gameCatalog = [];
 let selectedGameId = 'minecraft';
 /** @type {Record<string, string>} */
 let selectedServerKeys = {};
+let clientPackNeedsUpdate = false;
+
+function computePlayButtonLabel() {
+  if (gameRunning) return PLAY_LABEL_RUNNING;
+  return clientPackNeedsUpdate ? PLAY_LABEL_UPDATE : PLAY_LABEL_IDLE;
+}
+
+function getDisplayMode() {
+  const selected = document.querySelector('input[name="displayMode"]:checked');
+  return selected?.value === DISPLAY_MODE_FULLSCREEN
+    ? DISPLAY_MODE_FULLSCREEN
+    : DISPLAY_MODE_WINDOWED;
+}
+
+function applyDisplayModeToUi(mode) {
+  const value = mode === DISPLAY_MODE_FULLSCREEN
+    ? DISPLAY_MODE_FULLSCREEN
+    : DISPLAY_MODE_WINDOWED;
+  const input = document.querySelector(`input[name="displayMode"][value="${value}"]`);
+  if (input) input.checked = true;
+}
 
 function escapeHtml(value) {
   return String(value)
@@ -191,7 +215,7 @@ function canLaunchSelectedGame() {
 function setPlayButtonRunning(running) {
   gameRunning = running;
   if (els.playBtnLabel) {
-    els.playBtnLabel.textContent = running ? PLAY_LABEL_RUNNING : PLAY_LABEL_IDLE;
+    els.playBtnLabel.textContent = computePlayButtonLabel();
   }
   if (els.playBtn) {
     els.playBtn.classList.toggle('btn-play--running', running);
@@ -242,6 +266,10 @@ function updatePlayState() {
   updateNicknameWarning();
   updateStatusHint();
 
+  if (els.playBtnLabel) {
+    els.playBtnLabel.textContent = computePlayButtonLabel();
+  }
+
   if (gameRunning) {
     els.playBtn.disabled = true;
     return;
@@ -262,6 +290,7 @@ async function loadProfile() {
   if (profile?.selectedServers) {
     selectedServerKeys = { ...profile.selectedServers };
   }
+  applyDisplayModeToUi(profile?.displayMode || DISPLAY_MODE_WINDOWED);
 }
 
 async function saveProfile() {
@@ -270,6 +299,7 @@ async function saveProfile() {
     apiUrl: DEFAULT_API,
     gameInstallPaths: profile?.gameInstallPaths || {},
     selectedServers: { ...selectedServerKeys },
+    displayMode: getDisplayMode(),
   };
   await invoke('save_profile', { profile });
 }
@@ -384,13 +414,14 @@ function renderGameGrid(message = null) {
   }).join('');
 
   els.gameGrid.querySelectorAll('.game-card').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const id = btn.getAttribute('data-game-id');
       if (!id || id === selectedGameId) return;
       selectedGameId = id;
       renderGameGrid();
       renderServerPanel();
       schedulePing();
+      await refreshClientPackUpdateState();
       updatePlayState();
     });
   });
@@ -586,7 +617,28 @@ async function refreshBootstrap() {
       els.serverPanel.hidden = true;
     }
   } finally {
+    await refreshClientPackUpdateState();
     updatePlayState();
+  }
+}
+
+async function refreshClientPackUpdateState() {
+  clientPackNeedsUpdate = false;
+  if (!bootstrap?.enabled) return;
+  if (selectedGameId !== 'minecraft') return;
+
+  try {
+    const minecraftVersion = bootstrap?.minecraftVersion;
+    const clientPack = bootstrap?.clientPack ?? null;
+    if (!minecraftVersion || !clientPack) return;
+
+    clientPackNeedsUpdate = Boolean(await invoke('client_pack_update_needed', {
+      gameId: selectedGameId,
+      minecraftVersion,
+      clientPack,
+    }));
+  } catch {
+    clientPackNeedsUpdate = false;
   }
 }
 
@@ -613,6 +665,7 @@ async function handlePlay() {
 
     if (result?.launched) {
       setProgress(false);
+      await refreshClientPackUpdateState();
       setPlayButtonRunning(true);
     }
   } catch (err) {
@@ -629,6 +682,7 @@ function openSettings() {
   if (!els.settingsModal) return;
   els.settingsModal.hidden = false;
   els.settingsModal.setAttribute('aria-hidden', 'false');
+  applyDisplayModeToUi(profile?.displayMode || DISPLAY_MODE_WINDOWED);
   void renderInstallPaths();
 }
 
@@ -714,7 +768,7 @@ async function pickInstallFolder(gameId) {
   if (!selected || Array.isArray(selected)) return;
 
   try {
-    await invoke('set_game_install_path_cmd', { gameId, path: selected });
+    await invoke('set_game_install_path_cmd', { gameId, path: selected, bootstrap });
     if (profile) {
       profile.gameInstallPaths = { ...(profile.gameInstallPaths || {}), [gameId]: selected };
     }
@@ -729,7 +783,7 @@ async function resetInstallFolder(gameId) {
   if (busy || gameRunning) return;
 
   try {
-    await invoke('set_game_install_path_cmd', { gameId, path: null });
+    await invoke('set_game_install_path_cmd', { gameId, path: null, bootstrap });
     if (profile?.gameInstallPaths) {
       delete profile.gameInstallPaths[gameId];
     }
@@ -765,6 +819,8 @@ async function handleClearData() {
   );
   if (!confirmed) return;
 
+  const preservedNickname = els.nickname.value.trim();
+
   busy = true;
   updatePlayState();
   if (els.clearDataBtn) els.clearDataBtn.disabled = true;
@@ -774,8 +830,13 @@ async function handleClearData() {
     await invoke('clear_all_data');
     bootstrap = null;
     gameCatalog = [];
-    els.nickname.value = '';
+    profile = null;
+    selectedServerKeys = {};
+    clientPackNeedsUpdate = false;
+    els.nickname.value = preservedNickname;
+    applyDisplayModeToUi(DISPLAY_MODE_WINDOWED);
     selectedGameId = 'minecraft';
+    await saveProfile();
     await closeSettings(false);
     setProgress(true, 100, 'Данные удалены');
     await refreshBootstrap();

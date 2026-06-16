@@ -3,6 +3,19 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DisplayMode {
+    Windowed,
+    Fullscreen,
+}
+
+impl Default for DisplayMode {
+    fn default() -> Self {
+        Self::Windowed
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Profile {
@@ -12,6 +25,8 @@ pub struct Profile {
     pub game_install_paths: HashMap<String, String>,
     #[serde(default)]
     pub selected_servers: HashMap<String, String>,
+    #[serde(default)]
+    pub display_mode: DisplayMode,
 }
 
 impl Default for Profile {
@@ -21,6 +36,7 @@ impl Default for Profile {
             api_url: "https://chadow.ru/api/minecraft/bootstrap".to_string(),
             game_install_paths: HashMap::new(),
             selected_servers: HashMap::new(),
+            display_mode: DisplayMode::default(),
         }
     }
 }
@@ -99,6 +115,100 @@ pub fn set_game_install_path(game_id: &str, path: Option<String>) -> Result<(), 
     save_profile(&profile)
 }
 
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+    for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let ty = entry.file_type().map_err(|e| e.to_string())?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else if ty.is_file() {
+            if let Some(parent) = dst_path.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::copy(&src_path, &dst_path).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn move_path(src: &Path, dst: &Path) -> Result<(), String> {
+    if !src.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    match fs::rename(src, dst) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            if src.is_dir() {
+                copy_dir_recursive(src, dst)?;
+                fs::remove_dir_all(src).map_err(|e| e.to_string())?;
+            } else {
+                fs::copy(src, dst).map_err(|e| e.to_string())?;
+                fs::remove_file(src).map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn move_minecraft_client_data(old_root: &Path, new_root: &Path) -> Result<(), String> {
+    // Move only game client payload; launcher service files stay in launcher_root.
+    let top_level_dirs = ["versions", "libraries", "assets", "mods", "instances", "natives"];
+    for dir_name in top_level_dirs {
+        let src = old_root.join(dir_name);
+        let dst = new_root.join(dir_name);
+        move_path(&src, &dst)?;
+    }
+
+    let old_cache = old_root.join(".cache");
+    let new_cache = new_root.join(".cache");
+    if old_cache.exists() {
+        fs::create_dir_all(&new_cache).map_err(|e| e.to_string())?;
+        for entry in fs::read_dir(&old_cache).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with("applied-pack-") && name_str.ends_with(".sha256") {
+                move_path(&entry.path(), &new_cache.join(&name))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub fn relocate_game_install_path(game_id: &str, path: Option<String>) -> Result<PathBuf, String> {
+    let old_root = game_install_root(game_id);
+    let new_root = match path.as_ref().map(|p| p.trim()).filter(|p| !p.is_empty()) {
+        Some(value) => PathBuf::from(value),
+        None => default_game_install_root(game_id),
+    };
+
+    if old_root == new_root {
+        set_game_install_path(game_id, path)?;
+        fs::create_dir_all(&new_root).map_err(|e| e.to_string())?;
+        return Ok(new_root);
+    }
+
+    fs::create_dir_all(&new_root).map_err(|e| e.to_string())?;
+
+    if old_root.exists() {
+        if game_id == "minecraft" {
+            move_minecraft_client_data(&old_root, &new_root)?;
+        } else {
+            move_path(&old_root, &new_root)?;
+        }
+    }
+
+    set_game_install_path(game_id, path)?;
+    Ok(new_root)
+}
+
 pub fn profile_path() -> PathBuf {
     launcher_root().join("profile.json")
 }
@@ -159,6 +269,18 @@ fn is_subpath(parent: &Path, child: &Path) -> bool {
 pub fn clear_all_data() -> Result<(), String> {
     let profile = load_profile();
     let launcher = launcher_root();
+    let mut cleanup_roots: Vec<PathBuf> = vec![default_game_install_root("minecraft")];
+    cleanup_roots.extend(
+        profile
+            .game_install_paths
+            .values()
+            .map(|path| PathBuf::from(path.trim()))
+            .filter(|path| !path.as_os_str().is_empty()),
+    );
+
+    cleanup_roots.sort();
+    cleanup_roots.dedup();
+
     let custom_paths: Vec<PathBuf> = profile
         .game_install_paths
         .values()
@@ -169,6 +291,12 @@ pub fn clear_all_data() -> Result<(), String> {
 
     if launcher.exists() {
         fs::remove_dir_all(&launcher).map_err(|e| e.to_string())?;
+    }
+
+    for root in cleanup_roots {
+        if root.exists() {
+            let _ = fs::remove_dir_all(&root);
+        }
     }
 
     for path in custom_paths {
