@@ -143,3 +143,7 @@ Bootstrap API отдаёт:
 - **Backend:** Rust, Tauri 2, reqwest
 - **Mod:** Fabric Loom, Java 21, Mixins
 - **Installer:** NSIS (Windows)
+
+## Лицензия
+
+Делайте что угодно: используйте, изменяйте, распространяйте, в том числе в коммерческих проектах.
