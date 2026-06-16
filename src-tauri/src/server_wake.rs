@@ -49,6 +49,49 @@ pub async fn wake_game_servers(
                     continue;
                 }
 
+                if let Some(reason) = data.get("reason").and_then(|value| value.as_str()) {
+                    last_error = match reason {
+                        "no_token" => "на сайте не настроен Exaroton API token".to_string(),
+                        "no_exaroton_servers" => {
+                            "у серверов не указан Exaroton ID".to_string()
+                        }
+                        "server_not_configured" => {
+                            "у выбранного сервера не указан Exaroton ID".to_string()
+                        }
+                        other => format!("пробуждение не выполнено ({other})"),
+                    };
+                    continue;
+                }
+
+                if let Some(woken) = data.get("woken").and_then(|value| value.as_array()) {
+                    let mut wake_error = None;
+                    for entry in woken {
+                        if entry.get("ok").and_then(|value| value.as_bool()) == Some(false) {
+                            let server_id = entry
+                                .get("id")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or("server");
+                            let detail = entry
+                                .get("error")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or("exaroton error");
+                            wake_error = Some(format!("{server_id}: {detail}"));
+                            break;
+                        }
+                    }
+
+                    if let Some(err) = wake_error {
+                        last_error = err;
+                        continue;
+                    }
+
+                    if woken.iter().all(|entry| {
+                        entry.get("ok").and_then(|value| value.as_bool()) == Some(true)
+                    }) {
+                        return Ok(());
+                    }
+                }
+
                 return Ok(());
             }
             Err(err) => {
