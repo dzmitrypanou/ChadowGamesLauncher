@@ -14,7 +14,6 @@ use uuid::Uuid;
 
 const LAUNCHER_NAME: &str = "chadow-games-launcher";
 const LAUNCHER_VERSION: &str = "3.2.2";
-const PENDING_CONNECT_FILE: &str = "chadow-connect.txt";
 
 static GAME_RUNNING: AtomicBool = AtomicBool::new(false);
 
@@ -310,29 +309,37 @@ fn apply_fullscreen_option(game_dir: &Path, fullscreen: bool) -> Result<(), Stri
     std::fs::write(path, contents).map_err(|e| e.to_string())
 }
 
-fn launch_features(custom_resolution: bool) -> HashMap<&'static str, bool> {
+fn launch_features(
+    server: Option<&(String, u16)>,
+    custom_resolution: bool,
+) -> HashMap<&'static str, bool> {
+    let quick_multiplayer = server.is_some();
     HashMap::from([
         ("is_demo_user", false),
         ("has_custom_resolution", custom_resolution),
         ("has_quick_plays_support", false),
         ("is_quick_play_singleplayer", false),
-        ("is_quick_play_multiplayer", false),
+        ("is_quick_play_multiplayer", quick_multiplayer),
         ("is_quick_play_realms", false),
     ])
 }
 
-fn write_pending_connect(game_dir: &Path, server: Option<&(String, u16)>) -> Result<(), String> {
-    let path = game_dir.join(PENDING_CONNECT_FILE);
-    match server {
-        Some((host, port)) => std::fs::write(&path, format_quick_play_server(host, *port))
-            .map_err(|e| e.to_string()),
-        None => {
-            if path.exists() {
-                std::fs::remove_file(path).map_err(|e| e.to_string())?;
-            }
-            Ok(())
-        }
+fn ensure_quick_play_args(mut args: Vec<String>, server: Option<&(String, u16)>) -> Vec<String> {
+    let Some((host, port)) = server else {
+        return args;
+    };
+
+    let target = format_quick_play_server(host, *port);
+    let has_flag = args
+        .windows(2)
+        .any(|pair| pair[0] == "--quickPlayMultiplayer" && pair[1] == target);
+
+    if !has_flag {
+        args.push("--quickPlayMultiplayer".into());
+        args.push(target);
     }
+
+    args
 }
 
 fn filter_optional_game_args(args: Vec<String>) -> Vec<String> {
@@ -387,14 +394,20 @@ pub fn launch_game(
     std::fs::create_dir_all(&assets_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&natives).map_err(|e| e.to_string())?;
 
-    let fullscreen = display_mode == DisplayMode::Fullscreen;
-    let window_size = if fullscreen {
-        None
-    } else {
-        Some(primary_screen_size(app))
-    };
-    apply_fullscreen_option(&game_dir, fullscreen)?;
-    write_pending_connect(&game_dir, server)?;
+    let work_area_size = primary_screen_size(app);
+    // Exclusive Minecraft fullscreen covers the taskbar on Windows; use work-area resolution instead.
+    let window_size = Some(work_area_size);
+    apply_fullscreen_option(&game_dir, false)?;
+    log_line(&format!(
+        "Display mode: {}, resolution: {}x{}",
+        if display_mode == DisplayMode::Fullscreen {
+            "fullscreen"
+        } else {
+            "windowed"
+        },
+        work_area_size.0,
+        work_area_size.1
+    ));
 
     let uuid = offline_uuid(username);
     let access_token = uuid.clone();
@@ -424,10 +437,15 @@ pub fn launch_game(
     vars.insert("resolution_height", resolution_height);
     vars.insert("quickPlayPath", String::new());
     vars.insert("quickPlaySingleplayer", String::new());
-    vars.insert("quickPlayMultiplayer", String::new());
+    vars.insert(
+        "quickPlayMultiplayer",
+        server
+            .map(|(host, port)| format_quick_play_server(host, *port))
+            .unwrap_or_default(),
+    );
     vars.insert("quickPlayRealms", String::new());
 
-    let features = launch_features(window_size.is_some());
+    let features = launch_features(server, window_size.is_some());
 
     let java_path = java_gui_exe(java_exe);
     let mut cmd = Command::new(&java_path);
@@ -447,8 +465,10 @@ pub fn launch_game(
             cmd.arg(arg);
         }
 
-        let game_args =
-            filter_optional_game_args(resolve_args(arguments.game.as_ref(), &vars, &features));
+        let game_args = ensure_quick_play_args(
+            filter_optional_game_args(resolve_args(arguments.game.as_ref(), &vars, &features)),
+            server,
+        );
         cmd.arg(&details.main_class);
         for arg in &game_args {
             cmd.arg(arg);
@@ -470,6 +490,7 @@ pub fn launch_game(
             &assets_dir,
             &details.asset_index.id,
             &vars["auth_uuid"],
+            server,
             window_size,
         ) {
             cmd.arg(arg);
@@ -583,6 +604,7 @@ fn legacy_game_args(
     assets_dir: &Path,
     asset_index: &str,
     uuid: &str,
+    server: Option<&(String, u16)>,
     window_size: Option<(u32, u32)>,
 ) -> Vec<String> {
     let mut args = vec![
@@ -611,6 +633,11 @@ fn legacy_game_args(
         args.push(width.to_string());
         args.push("--height".into());
         args.push(height.to_string());
+    }
+
+    if let Some((host, port)) = server {
+        args.push("--quickPlayMultiplayer".into());
+        args.push(format_quick_play_server(host, *port));
     }
 
     args
