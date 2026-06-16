@@ -23,8 +23,12 @@ pub fn request_install_cancel() {
     INSTALL_CANCELLED.store(true, Ordering::SeqCst);
 }
 
+pub fn is_install_cancelled() -> bool {
+    INSTALL_CANCELLED.load(Ordering::SeqCst)
+}
+
 fn ensure_not_cancelled() -> Result<(), String> {
-    if INSTALL_CANCELLED.load(Ordering::SeqCst) {
+    if is_install_cancelled() {
         Err("Установка отменена".to_string())
     } else {
         Ok(())

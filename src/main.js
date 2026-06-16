@@ -319,6 +319,9 @@ function selectServer(gameId, serverId) {
   selectedServerKeys[gameId] = serverId;
   updateServerSelectionUi(gameId);
   updatePlayState();
+  if (gameId === selectedGameId) {
+    void requestServerWake(serverId);
+  }
 }
 
 function updateServerSelectionUi(gameId = selectedGameId) {
@@ -470,6 +473,19 @@ async function fetchBootstrap() {
   return invoke('fetch_bootstrap', { apiUrl: getApiUrl() });
 }
 
+async function requestServerWake(serverId = null) {
+  if (!bootstrap?.enabled) return;
+  try {
+    await invoke('wake_game_servers', {
+      apiUrl: getApiUrl(),
+      gameId: 'minecraft',
+      serverId: serverId || null,
+    });
+  } catch {
+    // wake is best-effort
+  }
+}
+
 function gameVisual(id, fallbackName) {
   const preset = GAME_VISUALS[id] || {};
   return {
@@ -506,6 +522,8 @@ function buildGameCatalog(data) {
         name: String(server.name || server.host),
         host: String(server.host),
         port: Number(server.port) || 25565,
+        connectHost: String(server.connectHost || server.host),
+        connectPort: Number(server.connectPort ?? server.port) || 25565,
         icon: server.icon ? String(server.icon) : '',
         description: serverDescriptionLines(server.description),
       });
@@ -732,6 +750,7 @@ function applyBootstrap(data) {
 
   renderGameGrid();
   renderServerPanel();
+  void requestServerWake(getSelectedServer()?.id || null);
 }
 
 async function refreshBootstrap() {
@@ -799,10 +818,13 @@ async function handlePlay() {
   try {
     await saveProfile();
     const server = getSelectedServer();
+    setInstallProgress(0, 'Запуск сервера…');
+    await requestServerWake(server?.id || null);
     const result = await invoke('prepare_and_launch', {
       nickname: launchNick,
       gameId,
       serverId: server?.id || null,
+      apiUrl: getApiUrl(),
       bootstrap,
     });
 

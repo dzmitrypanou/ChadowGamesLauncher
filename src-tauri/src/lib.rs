@@ -4,6 +4,8 @@ pub mod install;
 mod launch;
 mod ping;
 mod profile;
+mod server_wait;
+mod server_wake;
 
 use install::{
     client_pack_needs_update, collect_classpath, ensure_java, ensure_minecraft, is_version_installed,
@@ -192,6 +194,20 @@ async fn ping_server(host: String, port: u16) -> Result<PingResult, String> {
 }
 
 #[tauri::command]
+async fn wake_game_servers(
+    api_url: String,
+    game_id: String,
+    server_id: Option<String>,
+) -> Result<(), String> {
+    server_wake::wake_game_servers(
+        &api_url,
+        &game_id,
+        server_id.as_deref(),
+    )
+    .await
+}
+
+#[tauri::command]
 fn game_is_running() -> bool {
     is_game_running()
 }
@@ -202,6 +218,7 @@ async fn prepare_and_launch(
     nickname: String,
     game_id: String,
     server_id: Option<String>,
+    api_url: String,
     bootstrap: Value,
 ) -> Result<LaunchResult, String> {
     reset_install_cancel();
@@ -225,7 +242,27 @@ async fn prepare_and_launch(
         );
     };
 
-    emit(1, "Подготовка Java…");
+    let server = pick_launch_server(&bootstrap, &game_id, server_id.as_deref());
+
+    emit(1, "Запуск сервера…");
+    if let Err(err) = server_wake::wake_game_servers(
+        &api_url,
+        &game_id,
+        server_id.as_deref(),
+    )
+    .await
+    {
+        emit(1, &format!("Сервер: {err}"));
+    }
+
+    if let Some((host, port)) = server.as_ref() {
+        server_wait::wait_for_server_online(host, *port, |message| {
+            emit(5, message);
+        })
+        .await?;
+    }
+
+    emit(10, "Подготовка Java…");
     let java_exe = ensure_java(&app, config.java_major, |p, m| emit(p, m)).await?;
 
     emit(42, "Подготовка Minecraft…");
@@ -258,9 +295,8 @@ async fn prepare_and_launch(
     if classpath.is_empty() {
         return Err("Не удалось собрать classpath для запуска".to_string());
     }
-    emit(100, "Запуск…");
 
-    let server = pick_launch_server(&bootstrap, &game_id, server_id.as_deref());
+    emit(100, "Запуск…");
 
     launch_game(
         &app,
@@ -316,6 +352,7 @@ pub fn run() {
             load_cached_bootstrap,
             fetch_bootstrap,
             ping_server,
+            wake_game_servers,
             game_is_running,
             prepare_and_launch,
             cancel_install,

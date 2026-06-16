@@ -13,10 +13,6 @@ import ru.chadow.games.client.ChadowGamesClientMod;
 public abstract class DisconnectedScreenMixin {
     @Inject(method = "init", at = @At("RETURN"))
     private void chadow$quitInsteadOfLobby(CallbackInfo ci) {
-        if (!ChadowGamesClientMod.isInGameSession()) {
-            return;
-        }
-
         DisconnectedScreen screen = (DisconnectedScreen) (Object) this;
         Minecraft minecraft = Minecraft.getInstance();
 
@@ -29,8 +25,14 @@ public abstract class DisconnectedScreenMixin {
             if (ChadowGamesClientMod.isReportButtonLabel(text)) {
                 continue;
             }
+            if (!ChadowGamesClientMod.isLobbyNavigationLabel(text)) {
+                continue;
+            }
 
-            ((ButtonAccessor) button).chadow$setOnPress(btn -> minecraft.stop());
+            ((ButtonAccessor) button).chadow$setOnPress(btn -> {
+                ChadowGamesClientMod.requestQuit();
+                minecraft.stop();
+            });
         }
     }
 }

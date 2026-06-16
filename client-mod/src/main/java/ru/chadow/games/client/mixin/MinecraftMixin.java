@@ -1,9 +1,10 @@
 package ru.chadow.games.client.mixin;
 
+import com.mojang.blaze3d.platform.Window;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.network.chat.Component;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -16,39 +17,54 @@ public abstract class MinecraftMixin {
     @Shadow
     public ClientLevel level;
 
+    @Shadow
+    public Screen screen;
+
+    @Shadow
+    public Window window;
+
+    @Shadow
+    public abstract void setScreen(Screen screen);
+
     @Inject(method = "tick", at = @At("HEAD"))
-    private void chadow$trackSession(CallbackInfo ci) {
+    private void chadow$trackWorld(CallbackInfo ci) {
         if (this.level != null) {
-            ChadowGamesClientMod.markInGame();
+            ChadowGamesClientMod.markInWorld();
         }
     }
 
     @Inject(method = "setScreen", at = @At("HEAD"), cancellable = true)
     private void chadow$blockMenus(Screen screen, CallbackInfo ci) {
-        if (screen != null && ChadowGamesClientMod.shouldBlockScreen(screen)) {
-            ci.cancel();
-        }
-    }
-
-    @Inject(method = "disconnectFromWorld", at = @At("HEAD"), cancellable = true)
-    private void chadow$quitOnDisconnectFromWorld(Component reason, CallbackInfo ci) {
-        if (!ChadowGamesClientMod.isInGameSession()) {
+        if (screen == null || !ChadowGamesClientMod.shouldBlockScreen(screen)) {
             return;
         }
 
-        Minecraft client = (Minecraft) (Object) this;
-        client.stop();
         ci.cancel();
+        ChadowGamesClientMod.requestQuit();
+        ((Minecraft) (Object) this).stop();
     }
 
-    @Inject(method = "disconnectWithSavingScreen", at = @At("HEAD"), cancellable = true)
-    private void chadow$quitLauncherOnLeaveWorld(CallbackInfo ci) {
-        if (!ChadowGamesClientMod.isInGameSession()) {
+    @Inject(method = "stop", at = @At("HEAD"), cancellable = true)
+    private void chadow$guardStop(CallbackInfo ci) {
+        if (ChadowGamesClientMod.consumeQuitRequest()) {
             return;
         }
 
-        Minecraft client = (Minecraft) (Object) this;
-        client.stop();
+        if (this.window != null && this.window.shouldClose()) {
+            return;
+        }
+
         ci.cancel();
+
+        if (this.level != null && this.screen == null) {
+            this.setScreen(new PauseScreen(false));
+        }
+    }
+
+    @Inject(method = "pauseGame", at = @At("RETURN"))
+    private void chadow$ensurePauseOpened(boolean pauseOnly, CallbackInfo ci) {
+        if (this.level != null && this.screen == null) {
+            this.setScreen(new PauseScreen(pauseOnly));
+        }
     }
 }
