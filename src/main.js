@@ -10,6 +10,7 @@ const DEFAULT_API = 'https://chadow.ru/api/minecraft/bootstrap';
 const MINECRAFT_NICK_MAX = 16;
 
 const PLAY_LABEL_IDLE = 'Играть';
+const PLAY_LABEL_INSTALL = 'Установить';
 const PLAY_LABEL_UPDATE = 'Обновить';
 const PLAY_LABEL_RUNNING = 'Запущено';
 const DISPLAY_MODE_WINDOWED = 'windowed';
@@ -18,7 +19,7 @@ const DISPLAY_MODE_FULLSCREEN = 'fullscreen';
 /** Games shown before API support exists */
 const PLACEHOLDER_GAMES = [
   {
-    id: 'samp',
+    id: 'unknown',
     name: 'Неизвестно',
     subtitle: 'Данные отсутствуют',
     playable: false,
@@ -26,13 +27,26 @@ const PLACEHOLDER_GAMES = [
   },
 ];
 
+const SERVER_ICON_PRESETS = {
+  pickaxe: '⛏',
+  sword: '⚔',
+  castle: '🏰',
+  globe: '🌐',
+  fire: '🔥',
+  star: '⭐',
+  diamond: '💎',
+  tree: '🌲',
+  ship: '⛵',
+  pick: '🪓',
+};
+
 const GAME_VISUALS = {
   minecraft: {
     subtitle: 'Java Edition',
     accent: '#74f6c8',
     glyph: '⛏',
   },
-  samp: {
+  unknown: {
     subtitle: 'Данные отсутствуют',
     accent: '#6b7280',
     glyph: '?',
@@ -45,18 +59,24 @@ const els = {
   gameGrid: document.getElementById('gameGrid'),
   serverPanel: document.getElementById('serverPanel'),
   serverPanelTitle: document.getElementById('serverPanelTitle'),
+  serverCarousel: document.getElementById('serverCarousel'),
   serverList: document.getElementById('serverList'),
+  serverCarouselPrev: document.getElementById('serverCarouselPrev'),
+  serverCarouselNext: document.getElementById('serverCarouselNext'),
   statusHint: document.getElementById('statusHint'),
   progressWrap: document.getElementById('progressWrap'),
   progressFill: document.getElementById('progressFill'),
+  playBtnGroup: document.getElementById('playBtnGroup'),
   playBtn: document.getElementById('playBtn'),
   playBtnLabel: document.getElementById('playBtnLabel'),
+  cancelBtn: document.getElementById('cancelBtn'),
   settingsBtn: document.getElementById('settingsBtn'),
   settingsModal: document.getElementById('settingsModal'),
   settingsBackdrop: document.getElementById('settingsBackdrop'),
   settingsCloseBtn: document.getElementById('settingsCloseBtn'),
   settingsSaveBtn: document.getElementById('settingsSaveBtn'),
   clearDataBtn: document.getElementById('clearDataBtn'),
+  devModeCheckbox: document.getElementById('devModeCheckbox'),
   installPathsList: document.getElementById('installPathsList'),
   launcherVersion: document.getElementById('launcherVersion'),
   minimizeBtn: document.getElementById('minimizeBtn'),
@@ -67,21 +87,38 @@ const els = {
 let bootstrap = null;
 /** @type {{ nickname: string, apiUrl: string, gameInstallPaths?: Record<string, string>, selectedServers?: Record<string, string> }|null} */
 let profile = null;
-let busy = false;
-/** @type {ReturnType<typeof setInterval>|null} */
-let pingTimer = null;
+let launcherBusy = false;
 let gameRunning = false;
+/** @type {{ gameId: string, percent: number, message: string } | null} */
+let installJob = null;
+/** @type {{ percent: number, message: string } | null} */
+let transientProgress = null;
 
 /** @type {Array<{ id: string, name: string, subtitle: string, playable: boolean, badge?: string, accent: string, glyph: string, servers: Array<{ key: string, name: string, host: string, port: number }> }>} */
 let gameCatalog = [];
 let selectedGameId = 'minecraft';
 /** @type {Record<string, string>} */
 let selectedServerKeys = {};
-let clientPackNeedsUpdate = false;
+/** @type {Record<string, { installed: boolean, needsUpdate: boolean }>} */
+const clientStatusByGame = {};
+
+function getClientStatus(gameId = selectedGameId) {
+  return clientStatusByGame[gameId] ?? { installed: false, needsUpdate: false };
+}
+
+function isInstallRunning() {
+  return installJob !== null;
+}
+
+function isSelectedGameInstalling() {
+  return installJob?.gameId === selectedGameId;
+}
 
 function computePlayButtonLabel() {
   if (gameRunning) return PLAY_LABEL_RUNNING;
-  return clientPackNeedsUpdate ? PLAY_LABEL_UPDATE : PLAY_LABEL_IDLE;
+  const { installed, needsUpdate } = getClientStatus(selectedGameId);
+  if (!installed) return PLAY_LABEL_INSTALL;
+  return needsUpdate ? PLAY_LABEL_UPDATE : PLAY_LABEL_IDLE;
 }
 
 function getDisplayMode() {
@@ -99,6 +136,16 @@ function applyDisplayModeToUi(mode) {
   if (input) input.checked = true;
 }
 
+function getDevMode() {
+  return Boolean(els.devModeCheckbox?.checked);
+}
+
+function applyDevModeToUi(enabled) {
+  if (els.devModeCheckbox) {
+    els.devModeCheckbox.checked = Boolean(enabled);
+  }
+}
+
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, '&amp;')
@@ -107,25 +154,106 @@ function escapeHtml(value) {
     .replace(/"/g, '&quot;');
 }
 
-function setProgress(visible, percent = 0, text = '') {
-  const pct = Math.max(0, Math.min(100, Math.round(percent)));
-  const message = text || 'Подготовка…';
-
-  if (els.progressWrap) {
-    els.progressWrap.hidden = !visible;
+function resolveServerIcon(icon) {
+  const raw = String(icon || '').trim();
+  if (!raw) return null;
+  if (SERVER_ICON_PRESETS[raw]) return { type: 'glyph', value: SERVER_ICON_PRESETS[raw] };
+  if (/^https?:\/\//i.test(raw) || raw.startsWith('/')) {
+    const url = raw.startsWith('/') ? `https://chadow.ru${raw}` : raw;
+    return { type: 'image', value: url };
   }
+  return { type: 'glyph', value: raw };
+}
+
+function renderServerIconMarkup(icon, accent) {
+  const resolved = resolveServerIcon(icon);
+  if (!resolved) {
+    return `<span class="server-card-icon server-card-icon--fallback" aria-hidden="true">🌐</span>`;
+  }
+  if (resolved.type === 'image') {
+    return `<span class="server-card-icon server-card-icon--image" aria-hidden="true"><img src="${escapeHtml(resolved.value)}" alt="" /></span>`;
+  }
+  return `<span class="server-card-icon" style="--server-accent:${escapeHtml(accent)}" aria-hidden="true">${escapeHtml(resolved.value)}</span>`;
+}
+
+function serverDescriptionLines(description) {
+  if (Array.isArray(description)) {
+    return description
+      .map(line => String(line || '').trim())
+      .filter(Boolean)
+      .slice(0, 3);
+  }
+
+  return String(description || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+function renderServerDescriptionMarkup(description) {
+  const lines = serverDescriptionLines(description);
+  if (!lines.length) return '';
+
+  return `<span class="server-card-desc">${lines
+    .map(line => `<span class="server-card-desc-line">${escapeHtml(line)}</span>`)
+    .join('')}</span>`;
+}
+
+function applyProgressBar(percent, message) {
+  const pct = Math.max(0, Math.min(100, Math.round(percent)));
+  const text = message || 'Подготовка…';
+
   if (els.progressFill) els.progressFill.style.width = `${pct}%`;
   if (els.statusHint) {
-    els.statusHint.classList.toggle('status-hint--loading', visible);
-    els.statusHint.textContent = visible ? `${message} · ${pct}%` : '';
-    if (!visible) updateStatusHint();
+    els.statusHint.classList.toggle('status-hint--loading', true);
+    els.statusHint.textContent = `${text} · ${pct}%`;
   }
 
   const bar = els.progressWrap?.querySelector('.progress-strip-bar');
   if (bar) {
     bar.setAttribute('aria-valuenow', String(pct));
-    bar.setAttribute('aria-valuetext', `${pct}% — ${message}`);
+    bar.setAttribute('aria-valuetext', `${pct}% — ${text}`);
   }
+}
+
+function setInstallProgress(percent, message) {
+  if (!installJob) return;
+  installJob.percent = percent;
+  installJob.message = message || 'Подготовка…';
+  syncFooterUi();
+}
+
+function showTransientProgress(percent, message, autoHideMs = 0) {
+  transientProgress = { percent, message: message || 'Подготовка…' };
+  syncFooterUi();
+  if (autoHideMs > 0) {
+    window.setTimeout(() => {
+      transientProgress = null;
+      syncFooterUi();
+    }, autoHideMs);
+  }
+}
+
+function syncFooterUi() {
+  const showInstall = isSelectedGameInstalling();
+  const showTransient = transientProgress !== null && !showInstall;
+  const showProgress = showInstall || showTransient;
+
+  if (els.progressWrap) {
+    els.progressWrap.hidden = !showProgress;
+  }
+
+  if (showInstall && installJob) {
+    applyProgressBar(installJob.percent, installJob.message);
+  } else if (showTransient && transientProgress) {
+    applyProgressBar(transientProgress.percent, transientProgress.message);
+  } else if (els.statusHint) {
+    els.statusHint.classList.remove('status-hint--loading');
+    updateStatusHint();
+  }
+
+  setCancelVisible(showInstall);
 }
 
 function nicknameSanitized(value) {
@@ -199,6 +327,17 @@ function updateServerSelectionUi(gameId = selectedGameId) {
     const isSelected = card.getAttribute('data-server-id') === selectedId;
     card.classList.toggle('server-card--selected', isSelected);
     card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+
+    let check = card.querySelector('.server-card-check');
+    if (isSelected && !check) {
+      check = document.createElement('span');
+      check.className = 'server-card-check';
+      check.setAttribute('aria-hidden', 'true');
+      check.textContent = '✓';
+      card.appendChild(check);
+    } else if (!isSelected && check) {
+      check.remove();
+    }
   });
 }
 
@@ -223,16 +362,17 @@ function setPlayButtonRunning(running) {
   updatePlayState();
 }
 
+function setCancelVisible(visible) {
+  els.playBtnGroup?.classList.toggle('btn-play-group--installing', visible);
+}
+
 function updateStatusHint() {
   if (!els.statusHint) return;
 
+  if (isSelectedGameInstalling()) return;
+
   if (gameRunning) {
     els.statusHint.textContent = 'Игра запущена — закройте клиент, чтобы сыграть снова';
-    return;
-  }
-
-  if (busy) {
-    els.statusHint.textContent = 'Подготовка клиента…';
     return;
   }
 
@@ -259,12 +399,31 @@ function updateStatusHint() {
   }
 
   const server = getSelectedServer(game);
-  els.statusHint.textContent = `Готово к запуску — ${game.name}${server ? ` · ${server.name}` : ''}`;
+
+  if (game.id === 'minecraft' && !server) {
+    els.statusHint.textContent = `Выберите сервер — ${game.name}`;
+    return;
+  }
+
+  const gameLine = `${game.name}${server ? ` · ${server.name}` : ''}`;
+  const { installed, needsUpdate } = getClientStatus(game.id);
+
+  if (game.id === 'minecraft' && !installed) {
+    els.statusHint.textContent = `Требуется установка — ${gameLine}`;
+    return;
+  }
+
+  if (game.id === 'minecraft' && needsUpdate) {
+    els.statusHint.textContent = `Доступно обновление — ${gameLine}`;
+    return;
+  }
+
+  els.statusHint.textContent = `Готово к запуску — ${gameLine}`;
 }
 
 function updatePlayState() {
   updateNicknameWarning();
-  updateStatusHint();
+  syncFooterUi();
 
   if (els.playBtnLabel) {
     els.playBtnLabel.textContent = computePlayButtonLabel();
@@ -276,7 +435,8 @@ function updatePlayState() {
   }
 
   const nick = els.nickname.value.trim();
-  const ready = !busy && canLaunchSelectedGame() && validNickname(nick);
+  const installBlocksPlay = isSelectedGameInstalling();
+  const ready = !installBlocksPlay && !launcherBusy && canLaunchSelectedGame() && validNickname(nick);
   els.playBtn.disabled = !ready;
 }
 
@@ -291,6 +451,7 @@ async function loadProfile() {
     selectedServerKeys = { ...profile.selectedServers };
   }
   applyDisplayModeToUi(profile?.displayMode || DISPLAY_MODE_WINDOWED);
+  applyDevModeToUi(profile?.devMode);
 }
 
 async function saveProfile() {
@@ -300,17 +461,13 @@ async function saveProfile() {
     gameInstallPaths: profile?.gameInstallPaths || {},
     selectedServers: { ...selectedServerKeys },
     displayMode: getDisplayMode(),
+    devMode: getDevMode(),
   };
   await invoke('save_profile', { profile });
 }
 
 async function fetchBootstrap() {
   return invoke('fetch_bootstrap', { apiUrl: getApiUrl() });
-}
-
-function formatSlots(online, max) {
-  if (max <= 0) return '—';
-  return `${Math.max(0, online)}/${max}`;
 }
 
 function gameVisual(id, fallbackName) {
@@ -349,6 +506,8 @@ function buildGameCatalog(data) {
         name: String(server.name || server.host),
         host: String(server.host),
         port: Number(server.port) || 25565,
+        icon: server.icon ? String(server.icon) : '',
+        description: serverDescriptionLines(server.description),
       });
     }
 
@@ -392,14 +551,17 @@ function renderGameGrid(message = null) {
 
   els.gameGrid.innerHTML = gameCatalog.map(game => {
     const selected = game.id === selectedGameId;
-    const muted = !game.playable;
+    const disabled = !game.playable;
     return `
       <button
         type="button"
-        class="game-card${selected ? ' game-card--selected' : ''}${muted ? ' game-card--muted' : ''}"
+        class="game-card${selected ? ' game-card--selected' : ''}${disabled ? ' game-card--muted game-card--disabled' : ''}"
         data-game-id="${escapeHtml(game.id)}"
+        data-playable="${disabled ? 'false' : 'true'}"
         role="option"
         aria-selected="${selected ? 'true' : 'false'}"
+        aria-disabled="${disabled ? 'true' : 'false'}"
+        ${disabled ? 'disabled tabindex="-1"' : ''}
         style="--game-accent: ${escapeHtml(game.accent)}"
       >
         <span class="game-card-glow" aria-hidden="true"></span>
@@ -415,13 +577,17 @@ function renderGameGrid(message = null) {
 
   els.gameGrid.querySelectorAll('.game-card').forEach(btn => {
     btn.addEventListener('click', async () => {
+      if (btn.disabled || btn.getAttribute('data-playable') === 'false') return;
       const id = btn.getAttribute('data-game-id');
       if (!id || id === selectedGameId) return;
+      const game = gameCatalog.find(item => item.id === id);
+      if (!game?.playable) return;
       selectedGameId = id;
       renderGameGrid();
       renderServerPanel();
-      schedulePing();
-      await refreshClientPackUpdateState();
+      if (!isInstallRunning() || installJob.gameId !== id) {
+        await refreshClientPackUpdateState(id);
+      }
       updatePlayState();
     });
   });
@@ -461,31 +627,70 @@ function renderServerPanel() {
       : `Сервер — ${game.name}`;
   }
 
-  els.serverList.innerHTML = game.servers.map(server => `
+  els.serverList.innerHTML = game.servers.map(server => {
+    const accent = game.accent || '#64b5f6';
+    const selected = server.id === selectedId;
+    return `
     <button
       type="button"
-      class="server-card server-card--pending${server.id === selectedId ? ' server-card--selected' : ''}"
+      class="server-card${selected ? ' server-card--selected' : ''}"
       data-server-key="${escapeHtml(server.key)}"
       data-server-id="${escapeHtml(server.id)}"
-      aria-pressed="${server.id === selectedId ? 'true' : 'false'}"
+      aria-pressed="${selected ? 'true' : 'false'}"
+      style="--server-accent: ${escapeHtml(accent)}"
     >
-      <div class="server-card-main">
-        <h4 class="server-card-name">${escapeHtml(server.name)}</h4>
-        <p class="server-card-host mono">${escapeHtml(server.host)}:${server.port}</p>
-      </div>
-      <div class="server-card-stats">
-        <div class="server-stat">
-          <span class="server-stat-label">Слоты</span>
-          <span class="server-stat-value" data-field="slots">—</span>
-        </div>
-        <div class="server-stat">
-          <span class="server-stat-label">Пинг</span>
-          <span class="server-stat-value" data-field="ping">…</span>
-        </div>
-      </div>
-      <span class="server-card-status" data-field="status">проверка</span>
-    </button>
-  `).join('');
+      <span class="server-card-glow" aria-hidden="true"></span>
+      <span class="server-card-top">
+        ${renderServerIconMarkup(server.icon, accent)}
+        ${renderServerDescriptionMarkup(server.description)}
+      </span>
+      <span class="server-card-meta">
+        <span class="server-card-name">${escapeHtml(server.name)}</span>
+        <span class="server-card-host mono">${escapeHtml(server.host)}:${server.port}</span>
+      </span>
+      ${selected ? '<span class="server-card-check" aria-hidden="true">✓</span>' : ''}
+    </button>`;
+  }).join('');
+
+  updateServerCarouselNav();
+}
+
+function updateServerCarouselNav() {
+  const track = els.serverList;
+  const nav = els.serverCarousel;
+  if (!track || !nav) return;
+
+  const overflow = track.scrollWidth > track.clientWidth + 4;
+  nav.classList.toggle('server-carousel--scrollable', overflow);
+
+  if (els.serverCarouselPrev) {
+    els.serverCarouselPrev.hidden = !overflow;
+    els.serverCarouselPrev.disabled = !overflow || track.scrollLeft <= 4;
+  }
+  if (els.serverCarouselNext) {
+    els.serverCarouselNext.hidden = !overflow;
+    els.serverCarouselNext.disabled = !overflow || track.scrollLeft + track.clientWidth >= track.scrollWidth - 4;
+  }
+}
+
+function scrollServerCarousel(direction) {
+  const track = els.serverList;
+  if (!track) return;
+  const amount = Math.max(220, Math.round(track.clientWidth * 0.72));
+  track.scrollBy({ left: direction * amount, behavior: 'smooth' });
+  window.setTimeout(updateServerCarouselNav, 280);
+}
+
+function setupServerCarousel() {
+  if (!els.serverList || els.serverList.dataset.carouselBound === '1') return;
+  els.serverList.dataset.carouselBound = '1';
+
+  els.serverList.addEventListener('scroll', () => {
+    window.requestAnimationFrame(updateServerCarouselNav);
+  }, { passive: true });
+
+  els.serverCarouselPrev?.addEventListener('click', () => scrollServerCarousel(-1));
+  els.serverCarouselNext?.addEventListener('click', () => scrollServerCarousel(1));
 }
 
 function setupServerListEvents() {
@@ -499,74 +704,6 @@ function setupServerListEvents() {
     if (!game || !serverId) return;
     selectServer(game.id, serverId);
   });
-}
-
-function setServerPingLoading(key) {
-  const card = els.serverList?.querySelector(`[data-server-key="${key}"]`);
-  if (!card) return;
-
-  card.classList.remove('server-card--online', 'server-card--offline');
-  card.classList.add('server-card--pending');
-
-  const stats = card.querySelector('.server-card-stats');
-  const status = card.querySelector('[data-field="status"]');
-  if (stats) stats.hidden = true;
-  if (status) status.textContent = 'проверка';
-}
-
-function updateServerPing(key, result) {
-  const card = els.serverList?.querySelector(`[data-server-key="${key}"]`);
-  if (!card) return;
-
-  const slots = card.querySelector('[data-field="slots"]');
-  const ping = card.querySelector('[data-field="ping"]');
-  const status = card.querySelector('[data-field="status"]');
-
-  card.classList.remove('server-card--pending');
-
-  if (result.online) {
-    card.classList.remove('server-card--offline');
-    card.classList.add('server-card--online');
-    const stats = card.querySelector('.server-card-stats');
-    if (stats) stats.hidden = false;
-    if (slots) slots.textContent = formatSlots(result.playersOnline, result.playersMax);
-    if (ping) ping.textContent = `${result.latencyMs} ms`;
-    if (status) status.textContent = 'online';
-  } else {
-    card.classList.remove('server-card--online');
-    card.classList.add('server-card--offline');
-    const stats = card.querySelector('.server-card-stats');
-    if (stats) stats.hidden = true;
-    if (status) status.textContent = 'offline';
-  }
-}
-
-async function pingSelectedServers() {
-  const game = selectedGame();
-  if (!game?.servers.length) return;
-
-  for (const server of game.servers) {
-    setServerPingLoading(server.key);
-  }
-
-  await Promise.all(game.servers.map(async server => {
-    try {
-      const result = await invoke('ping_server', { host: server.host, port: server.port });
-      updateServerPing(server.key, result);
-    } catch {
-      updateServerPing(server.key, { online: false, playersOnline: 0, playersMax: 0, latencyMs: 0 });
-    }
-  }));
-}
-
-function schedulePing() {
-  if (pingTimer) clearInterval(pingTimer);
-
-  const game = selectedGame();
-  if (!game?.playable || !game.servers.length) return;
-
-  void pingSelectedServers();
-  pingTimer = setInterval(() => void pingSelectedServers(), 20000);
 }
 
 function applyLauncherVersion(version) {
@@ -595,7 +732,6 @@ function applyBootstrap(data) {
 
   renderGameGrid();
   renderServerPanel();
-  schedulePing();
 }
 
 async function refreshBootstrap() {
@@ -622,59 +758,79 @@ async function refreshBootstrap() {
   }
 }
 
-async function refreshClientPackUpdateState() {
-  clientPackNeedsUpdate = false;
+async function refreshClientPackUpdateState(gameId = selectedGameId) {
+  if (isInstallRunning() && installJob.gameId === gameId) return;
+
+  clientStatusByGame[gameId] = { installed: false, needsUpdate: false };
   if (!bootstrap?.enabled) return;
-  if (selectedGameId !== 'minecraft') return;
+  if (gameId !== 'minecraft') return;
 
   try {
     const minecraftVersion = bootstrap?.minecraftVersion;
     const clientPack = bootstrap?.clientPack ?? null;
-    if (!minecraftVersion || !clientPack) return;
+    if (!minecraftVersion) return;
 
-    clientPackNeedsUpdate = Boolean(await invoke('client_pack_update_needed', {
-      gameId: selectedGameId,
+    const status = await invoke('client_install_status', {
+      gameId,
       minecraftVersion,
       clientPack,
-    }));
+    });
+
+    clientStatusByGame[gameId] = {
+      installed: Boolean(status?.installed),
+      needsUpdate: Boolean(status?.needsUpdate),
+    };
   } catch {
-    clientPackNeedsUpdate = false;
+    clientStatusByGame[gameId] = { installed: false, needsUpdate: false };
   }
 }
 
 async function handlePlay() {
-  if (busy || !canLaunchSelectedGame()) return;
+  if (isSelectedGameInstalling() || launcherBusy || !canLaunchSelectedGame()) return;
 
   const nickname = els.nickname.value.trim();
   const launchNick = minecraftLaunchUsername(nickname);
   if (!validNickname(nickname) || launchNick.length < 3) return;
 
-  busy = true;
+  const gameId = selectedGameId;
+  installJob = { gameId, percent: 0, message: 'Подготовка…' };
   updatePlayState();
-  setProgress(true, 0, 'Подготовка…');
 
   try {
     await saveProfile();
     const server = getSelectedServer();
     const result = await invoke('prepare_and_launch', {
       nickname: launchNick,
-      gameId: selectedGameId,
+      gameId,
       serverId: server?.id || null,
       bootstrap,
     });
 
+    installJob = null;
+
     if (result?.launched) {
-      setProgress(false);
-      await refreshClientPackUpdateState();
+      await refreshClientPackUpdateState(gameId);
       setPlayButtonRunning(true);
+      return;
     }
   } catch (err) {
+    installJob = null;
     const message = String(err || 'Не удалось запустить игру');
-    setProgress(true, 0, message);
-    setTimeout(() => setProgress(false), 12000);
-  } finally {
-    busy = false;
-    updatePlayState();
+    const lowered = message.toLowerCase();
+    const isCancelled = lowered.includes('отмен');
+    showTransientProgress(0, isCancelled ? 'Установка отменена' : message, isCancelled ? 2000 : 12000);
+  }
+
+  await refreshClientPackUpdateState(gameId);
+  updatePlayState();
+}
+
+async function handleCancelInstall() {
+  if (!isInstallRunning()) return;
+  try {
+    await invoke('cancel_install');
+  } catch {
+    // ignore cancel errors
   }
 }
 
@@ -683,6 +839,7 @@ function openSettings() {
   els.settingsModal.hidden = false;
   els.settingsModal.setAttribute('aria-hidden', 'false');
   applyDisplayModeToUi(profile?.displayMode || DISPLAY_MODE_WINDOWED);
+  applyDevModeToUi(profile?.devMode);
   void renderInstallPaths();
 }
 
@@ -695,11 +852,12 @@ function shortenPath(path) {
 async function renderInstallPaths() {
   if (!els.installPathsList) return;
 
-  const games = gameCatalog.length
-    ? gameCatalog
+  const games = gameCatalog.filter(game => game.playable);
+  const list = games.length
+    ? games
     : [{ id: 'minecraft', name: 'Minecraft', playable: true }];
 
-  const rows = await Promise.all(games.map(async (game) => {
+  const rows = await Promise.all(list.map(async (game) => {
     try {
       const info = await invoke('get_game_install_path', { gameId: game.id });
       return { game, info };
@@ -747,7 +905,7 @@ async function renderInstallPaths() {
 }
 
 async function pickInstallFolder(gameId) {
-  if (busy || gameRunning) return;
+  if (isInstallRunning() || launcherBusy || gameRunning) return;
 
   const game = gameCatalog.find(item => item.id === gameId);
   const info = await invoke('get_game_install_path', { gameId });
@@ -762,8 +920,7 @@ async function pickInstallFolder(gameId) {
       defaultPath: info?.path || undefined,
     });
   } catch (err) {
-    setProgress(true, 0, String(err || 'Не удалось открыть выбор папки'));
-    setTimeout(() => setProgress(false), 5000);
+    showTransientProgress(0, String(err || 'Не удалось открыть выбор папки'), 5000);
     return;
   }
 
@@ -776,13 +933,12 @@ async function pickInstallFolder(gameId) {
     }
     await renderInstallPaths();
   } catch (err) {
-    setProgress(true, 0, String(err || 'Не удалось сохранить папку'));
-    setTimeout(() => setProgress(false), 5000);
+    showTransientProgress(0, String(err || 'Не удалось сохранить папку'), 5000);
   }
 }
 
 async function resetInstallFolder(gameId) {
-  if (busy || gameRunning) return;
+  if (isInstallRunning() || launcherBusy || gameRunning) return;
 
   try {
     await invoke('set_game_install_path_cmd', { gameId, path: null, bootstrap });
@@ -791,8 +947,7 @@ async function resetInstallFolder(gameId) {
     }
     await renderInstallPaths();
   } catch (err) {
-    setProgress(true, 0, String(err || 'Не удалось сбросить папку'));
-    setTimeout(() => setProgress(false), 5000);
+    showTransientProgress(0, String(err || 'Не удалось сбросить папку'), 5000);
   }
 }
 
@@ -810,9 +965,12 @@ async function closeSettings(save = true) {
 }
 
 async function handleClearData() {
-  if (busy || gameRunning) {
-    setProgress(true, 0, gameRunning ? 'Закройте игру перед очисткой' : 'Дождитесь завершения операции');
-    setTimeout(() => setProgress(false), 4000);
+  if (isInstallRunning() || launcherBusy || gameRunning) {
+    showTransientProgress(
+      0,
+      gameRunning ? 'Закройте игру перед очисткой' : 'Дождитесь завершения операции',
+      4000,
+    );
     return;
   }
 
@@ -823,10 +981,10 @@ async function handleClearData() {
 
   const preservedNickname = els.nickname.value.trim();
 
-  busy = true;
+  launcherBusy = true;
   updatePlayState();
   if (els.clearDataBtn) els.clearDataBtn.disabled = true;
-  setProgress(true, 0, 'Очистка данных…');
+  showTransientProgress(0, 'Очистка данных…');
 
   try {
     await invoke('clear_all_data');
@@ -834,21 +992,22 @@ async function handleClearData() {
     gameCatalog = [];
     profile = null;
     selectedServerKeys = {};
-    clientPackNeedsUpdate = false;
+    installJob = null;
+    Object.keys(clientStatusByGame).forEach((key) => {
+      delete clientStatusByGame[key];
+    });
     els.nickname.value = preservedNickname;
     applyDisplayModeToUi(DISPLAY_MODE_WINDOWED);
     selectedGameId = 'minecraft';
     await saveProfile();
     await closeSettings(false);
-    setProgress(true, 100, 'Данные удалены');
+    showTransientProgress(100, 'Данные удалены', 2500);
     await refreshBootstrap();
-    setTimeout(() => setProgress(false), 2500);
   } catch (err) {
     const message = String(err || 'Не удалось очистить данные');
-    setProgress(true, 0, message);
-    setTimeout(() => setProgress(false), 6000);
+    showTransientProgress(0, message, 6000);
   } finally {
-    busy = false;
+    launcherBusy = false;
     if (els.clearDataBtn) els.clearDataBtn.disabled = false;
     updatePlayState();
   }
@@ -873,6 +1032,7 @@ els.nickname.addEventListener('keydown', e => {
   if (e.key === 'Enter') handlePlay();
 });
 els.playBtn.addEventListener('click', handlePlay);
+els.cancelBtn?.addEventListener('click', () => handleCancelInstall());
 els.settingsBtn.addEventListener('click', () => openSettings());
 els.settingsBackdrop?.addEventListener('click', () => closeSettings());
 els.settingsCloseBtn?.addEventListener('click', () => closeSettings());
@@ -887,12 +1047,15 @@ document.addEventListener('keydown', e => {
 async function init() {
   await setupWindowControls();
   setupServerListEvents();
+  setupServerCarousel();
 
   try {
     const { listen } = await import('@tauri-apps/api/event');
     await listen('install-progress', ({ payload }) => {
       const p = /** @type {{ percent: number, message: string }} */ (payload);
-      setProgress(true, p.percent, p.message);
+      if (installJob) {
+        setInstallProgress(p.percent, p.message);
+      }
     });
     await listen('game-exited', () => {
       setPlayButtonRunning(false);

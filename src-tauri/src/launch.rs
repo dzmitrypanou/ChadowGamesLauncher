@@ -4,10 +4,11 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
@@ -32,6 +33,28 @@ pub fn pick_launch_server(
         host: String,
         #[serde(default)]
         port: Option<u16>,
+        #[serde(default, rename = "connectHost")]
+        connect_host: Option<String>,
+        #[serde(default, rename = "connectPort")]
+        connect_port: Option<u16>,
+    }
+
+    fn resolve_connect(server: &ServerEntry) -> Option<(String, u16)> {
+        let display_host = server.host.trim();
+        let connect_host = server
+            .connect_host
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(display_host);
+        if connect_host.is_empty() {
+            return None;
+        }
+        let port = server
+            .connect_port
+            .or(server.port)
+            .unwrap_or(25565);
+        Some((connect_host.to_string(), port))
     }
 
     #[derive(Deserialize)]
@@ -68,15 +91,17 @@ pub fn pick_launch_server(
 
     if let Some(id) = server_id.map(str::trim).filter(|value| !value.is_empty()) {
         for server in &servers {
-            if server.id.as_deref() == Some(id) && !server.host.trim().is_empty() {
-                return Some((server.host.clone(), server.port.unwrap_or(25565)));
+            if server.id.as_deref() == Some(id) {
+                if let Some(resolved) = resolve_connect(server) {
+                    return Some(resolved);
+                }
             }
         }
     }
 
     for server in servers {
-        if !server.host.trim().is_empty() {
-            return Some((server.host, server.port.unwrap_or(25565)));
+        if let Some(resolved) = resolve_connect(&server) {
+            return Some(resolved);
         }
     }
 
@@ -118,6 +143,33 @@ fn log_line(message: &str) {
         writeln!(file, "{message}")?;
         Ok(())
     })();
+}
+
+fn java_gui_exe(java_exe: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let name = java_exe
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        if name.eq_ignore_ascii_case("java.exe") {
+            return java_exe.with_file_name("javaw.exe");
+        }
+    }
+    java_exe.to_path_buf()
+}
+
+fn read_log_tail(path: &Path, max_bytes: usize) -> String {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let len = file.metadata().map(|meta| meta.len() as usize).unwrap_or(0);
+    if len > max_bytes {
+        let _ = file.seek(std::io::SeekFrom::Start((len - max_bytes) as u64));
+    }
+    let mut buffer = String::new();
+    let _ = file.read_to_string(&mut buffer);
+    buffer.trim().chars().take(1200).collect()
 }
 
 fn rule_matches(rules: &[ArgRule], features: &HashMap<&str, bool>) -> bool {
@@ -388,7 +440,8 @@ pub fn launch_game(
 
     let features = launch_features(server, window_size.is_some());
 
-    let mut cmd = Command::new(java_exe);
+    let java_path = java_gui_exe(java_exe);
+    let mut cmd = Command::new(&java_path);
     if let Some(java_home) = java_exe.parent().and_then(|bin| bin.parent()) {
         cmd.env("JAVA_HOME", java_home);
     }
@@ -437,36 +490,52 @@ pub fn launch_game(
         }
     }
 
-    let stderr_path = root.join("minecraft-stderr.log");
-    let stderr_file = OpenOptions::new()
+    let game_log_path = root.join("minecraft-game.log");
+    let game_log_file = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
-        .open(&stderr_path)
+        .open(&game_log_path)
+        .map_err(|e| format!("Не удалось создать лог: {e}"))?;
+    let game_log_stdout = game_log_file
+        .try_clone()
         .map_err(|e| format!("Не удалось создать лог: {e}"))?;
 
     log_line(&format!(
         "Launching Minecraft {version} for {username} via {}{}",
-        java_exe.display(),
+        java_path.display(),
         server
             .map(|(host, port)| format!(" -> {host}:{port}"))
             .unwrap_or_default()
     ));
+    log_line(&format!("Main class: {}", details.main_class));
 
     cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::from(stderr_file));
-
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+        .stdout(Stdio::from(game_log_file))
+        .stderr(Stdio::from(game_log_stdout));
 
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Не удалось запустить Java: {e}"))?;
+
+    for _ in 0..30 {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let code = status.code().unwrap_or(-1);
+                let tail = read_log_tail(&game_log_path, 16_384);
+                let detail = if tail.is_empty() {
+                    format!("код выхода {code}")
+                } else {
+                    format!("код выхода {code}: {tail}")
+                };
+                return Err(format!(
+                    "Игра завершилась сразу после запуска ({detail})"
+                ));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+            Err(e) => return Err(format!("Не удалось проверить процесс Java: {e}")),
+        }
+    }
 
     GAME_RUNNING.store(true, Ordering::SeqCst);
     let app_handle = app.clone();

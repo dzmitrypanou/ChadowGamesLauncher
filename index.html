@@ -75,7 +75,11 @@
           <div class="section-head section-head--compact">
             <h3 class="section-title section-title--sm" id="serverPanelTitle">Сервер</h3>
           </div>
-          <div id="serverList" class="server-list"></div>
+          <div class="server-carousel" id="serverCarousel">
+            <button type="button" class="server-carousel-btn server-carousel-btn--prev" id="serverCarouselPrev" aria-label="Прокрутить серверы влево" hidden>‹</button>
+            <div id="serverList" class="server-carousel-track" role="listbox" aria-label="Список серверов"></div>
+            <button type="button" class="server-carousel-btn server-carousel-btn--next" id="serverCarouselNext" aria-label="Прокрутить серверы вправо" hidden>›</button>
+          </div>
         </section>
       </main>
 
@@ -96,10 +100,17 @@
               </div>
             </div>
           </div>
-          <button type="button" id="playBtn" class="btn btn-primary btn-play" disabled>
-            <span class="btn-play-icon" aria-hidden="true">▶</span>
-            <span id="playBtnLabel">Играть</span>
-          </button>
+          <div class="btn-play-group" id="playBtnGroup">
+            <button type="button" id="playBtn" class="btn btn-primary btn-play" disabled>
+              <span class="btn-play-icon" aria-hidden="true">▶</span>
+              <span id="playBtnLabel">Играть</span>
+            </button>
+            <button type="button" id="cancelBtn" class="btn-play-cancel" aria-label="Отменить установку" title="Отменить установку">
+              <svg class="btn-play-cancel-icon" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+                <rect x="2" y="2" width="10" height="10" rx="1.5" fill="currentColor"/>
+              </svg>
+            </button>
+          </div>
         </div>
       </footer>
     </div>
@@ -120,13 +131,29 @@
             <div class="display-mode-options" role="radiogroup" aria-label="Режим запуска">
               <label class="display-mode-option">
                 <input type="radio" name="displayMode" value="windowed" checked />
-                <span>В окне</span>
+                <span class="display-mode-option-body">
+                  <span class="display-mode-option-title">В окне</span>
+                  <span class="display-mode-option-sub">Размер под ваш экран</span>
+                </span>
               </label>
               <label class="display-mode-option">
                 <input type="radio" name="displayMode" value="fullscreen" />
-                <span>Полный экран</span>
+                <span class="display-mode-option-body">
+                  <span class="display-mode-option-title">Полный экран</span>
+                  <span class="display-mode-option-sub">Без рамок Windows</span>
+                </span>
               </label>
             </div>
+          </div>
+          <div class="settings-divider"></div>
+          <div class="settings-dev-section">
+            <label class="settings-dev-toggle">
+              <input type="checkbox" id="devModeCheckbox" />
+              <span class="settings-dev-toggle-body">
+                <span class="settings-dev-toggle-title">Режим разработчика</span>
+                <span class="settings-dev-toggle-sub">Разрешает загрузку клиента с официального репозитория Mojang</span>
+              </span>
+            </label>
           </div>
           <div class="settings-divider"></div>
           <div class="settings-install-section">

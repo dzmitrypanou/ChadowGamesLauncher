@@ -10,7 +10,26 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter};
+
+static INSTALL_CANCELLED: AtomicBool = AtomicBool::new(false);
+
+pub fn reset_install_cancel() {
+    INSTALL_CANCELLED.store(false, Ordering::SeqCst);
+}
+
+pub fn request_install_cancel() {
+    INSTALL_CANCELLED.store(true, Ordering::SeqCst);
+}
+
+fn ensure_not_cancelled() -> Result<(), String> {
+    if INSTALL_CANCELLED.load(Ordering::SeqCst) {
+        Err("Установка отменена".to_string())
+    } else {
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -222,10 +241,11 @@ pub(crate) fn client_pack_needs_update(root: &Path, version: &str, pack: &Client
 }
 
 pub async fn ensure_minecraft(
-    app: &AppHandle,
+    app: Option<&AppHandle>,
     install_root: &Path,
     version: &str,
     client_pack: Option<&ClientPack>,
+    allow_mojang_cdn: bool,
     emit: impl Fn(u8, &str),
 ) -> Result<(PathBuf, VersionDetails), String> {
     let root = install_root.to_path_buf();
@@ -241,8 +261,16 @@ pub async fn ensure_minecraft(
             if is_version_installed(&root, version, &details) && !pack_update {
                 if crate::fabric::has_mods(&root) {
                     emit(95, "Подготовка Fabric…");
-                    details = crate::fabric::ensure_fabric_loader(Some(app), &root, version, "0.18.2")
+                    details = crate::fabric::ensure_fabric_loader(app, &root, version, "0.18.2")
                         .await?;
+                }
+                if !is_version_installed(&root, version, &details) {
+                    emit(59, "Докачка библиотек…");
+                    install_libraries(app, &root, &details.libraries, 59, 82).await?;
+                    details = read_version_details(&json_path)?;
+                }
+                if !is_version_installed(&root, version, &details) {
+                    return Err("Клиент установлен не полностью — не хватает библиотек".to_string());
                 }
                 emit(99, "Клиент уже установлен");
                 return Ok((jar_path, details));
@@ -268,6 +296,9 @@ pub async fn ensure_minecraft(
                     log_line("Client pack overlay: mods only");
                 }
                 Err(err) => {
+                    if !allow_mojang_cdn {
+                        return Err(format!("Не удалось установить клиент из архива: {err}"));
+                    }
                     log_line(&format!("Client pack install failed: {err}, falling back to Mojang CDN"));
                     emit(45, "Архив недоступен, загрузка с Mojang…");
                 }
@@ -285,8 +316,16 @@ pub async fn ensure_minecraft(
         )
     {
         emit(95, "Подготовка Fabric…");
-        let details = crate::fabric::ensure_fabric_loader(Some(app), &root, version, "0.18.2").await?;
+        let details = crate::fabric::ensure_fabric_loader(app, &root, version, "0.18.2").await?;
         return Ok((jar_path, details));
+    }
+
+    if !allow_mojang_cdn {
+        return Err(
+            "Загрузка с официального репозитория Mojang отключена. \
+             Установите клиент из архива Chadow Games или включите «Режим разработчика» в настройках."
+                .to_string(),
+        );
     }
 
     emit(45, "Загрузка манифеста Minecraft…");
@@ -324,7 +363,7 @@ pub async fn ensure_minecraft(
 
     emit(50, "Скачивание клиента…");
     download_file_resumable(
-        Some(app),
+        app,
         &details.downloads.client.url,
         &jar_path,
         50,
@@ -343,14 +382,14 @@ pub async fn ensure_minecraft(
 
     if crate::fabric::has_mods(&root) {
         emit(95, "Подготовка Fabric…");
-        details = crate::fabric::ensure_fabric_loader(Some(app), &root, version, "0.18.2").await?;
+        details = crate::fabric::ensure_fabric_loader(app, &root, version, "0.18.2").await?;
     }
 
     Ok((jar_path, details))
 }
 
 async fn apply_fabric_if_mods(
-    app: &AppHandle,
+    app: Option<&AppHandle>,
     root: &Path,
     version: &str,
     details: VersionDetails,
@@ -358,7 +397,18 @@ async fn apply_fabric_if_mods(
 ) -> Result<VersionDetails, String> {
     if crate::fabric::has_mods(root) {
         emit(95, "Подготовка Fabric…");
-        crate::fabric::ensure_fabric_loader(Some(app), root, version, "0.18.2").await
+        let details = crate::fabric::ensure_fabric_loader(app, root, version, "0.18.2").await?;
+        if !is_version_installed(root, version, &details) {
+            emit(59, "Докачка библиотек…");
+            install_libraries(app, root, &details.libraries, 59, 82).await?;
+            let json_path = root.join("versions").join(version).join(format!("{version}.json"));
+            let details = read_version_details(&json_path)?;
+            if !is_version_installed(root, version, &details) {
+                return Err("Клиент установлен не полностью — не хватает библиотек".to_string());
+            }
+            return Ok(details);
+        }
+        Ok(details)
     } else {
         Ok(details)
     }
@@ -370,7 +420,7 @@ enum ClientPackResult {
 }
 
 async fn download_and_extract_client_pack(
-    app: &AppHandle,
+    app: Option<&AppHandle>,
     root: &Path,
     version: &str,
     pack: &ClientPack,
@@ -392,7 +442,7 @@ async fn download_and_extract_client_pack(
 
     if !skip_download {
         download_file_resumable(
-            Some(app),
+            app,
             &pack.url,
             &zip_path,
             46,
@@ -436,7 +486,7 @@ async fn download_and_extract_client_pack(
 }
 
 async fn install_from_client_pack(
-    app: &AppHandle,
+    app: Option<&AppHandle>,
     root: &Path,
     version: &str,
     pack: &ClientPack,
@@ -513,7 +563,7 @@ pub(crate) async fn download_file_resumable(
 ) -> Result<(), String> {
     if is_file_valid(dest, expected_sha1, expected_sha256) {
         if let Some(app) = app {
-            emit_progress(app, to, format!("{label} уже загружен"));
+            emit_progress(Some(app), to, format!("{label} уже загружен"));
         }
         return Ok(());
     }
@@ -522,7 +572,7 @@ pub(crate) async fn download_file_resumable(
     prepare_partial_download(dest, remote_size, expected_sha1, expected_sha256)?;
 
     if let Some(app) = app {
-        emit_progress(app, from, label.to_string());
+        emit_progress(Some(app), from, label.to_string());
     }
 
     let client = http_client_long();
@@ -576,6 +626,8 @@ pub(crate) async fn download_file_resumable(
             file.write_all(&chunk).map_err(|e| e.to_string())?;
             downloaded += chunk.len() as u64;
 
+            ensure_not_cancelled()?;
+
             if let Some(app) = app {
                 if let Some(total) = total_expected {
                     if total > 0 {
@@ -587,7 +639,7 @@ pub(crate) async fn download_file_resumable(
                         if now.duration_since(last_emit_at) >= Duration::from_millis(200) || downloaded >= total {
                             last_emit_at = now;
                             emit_progress(
-                                app,
+                                Some(app),
                                 pct,
                                 format!(
                                     "{label} {ratio_pct:.1}% · {done_mb:.1}/{total_mb:.1} MB · {speed_mb:.2} MB/s",
@@ -615,7 +667,7 @@ pub(crate) async fn download_file_resumable(
     }
 
     if let Some(app) = app {
-        emit_progress(app, to, format!("{label} готово"));
+        emit_progress(Some(app), to, format!("{label} готово"));
     }
     Ok(())
 }
@@ -746,12 +798,12 @@ fn extract_all_natives(root: &Path, libraries: &[Library]) -> Result<(), String>
     Ok(())
 }
 
-pub(crate) fn read_version_details(json_path: &Path) -> Result<VersionDetails, String> {
+pub fn read_version_details(json_path: &Path) -> Result<VersionDetails, String> {
     let raw = fs::read_to_string(json_path).map_err(|e| e.to_string())?;
     serde_json::from_str(&raw).map_err(|e| e.to_string())
 }
 
-fn is_version_installed(root: &Path, version: &str, details: &VersionDetails) -> bool {
+pub fn is_version_installed(root: &Path, version: &str, details: &VersionDetails) -> bool {
     let jar = root.join("versions").join(version).join(format!("{version}.jar"));
     if !jar.exists() || jar.metadata().map(|m| m.len()).unwrap_or(0) < 1024 {
         return false;
@@ -777,8 +829,8 @@ fn is_version_installed(root: &Path, version: &str, details: &VersionDetails) ->
     index_path.exists()
 }
 
-async fn install_libraries(
-    app: &AppHandle,
+pub(crate) async fn install_libraries(
+    app: Option<&AppHandle>,
     root: &Path,
     libraries: &[Library],
     from: u8,
@@ -789,6 +841,7 @@ async fn install_libraries(
     let natives_dir = root.join("natives");
 
     for (i, lib) in applicable.iter().enumerate() {
+        ensure_not_cancelled()?;
         let pct = from + ((i as u8).saturating_mul(to.saturating_sub(from)) / total as u8);
         emit_progress(app, pct, format!("Библиотеки ({}/{})", i + 1, total));
 
@@ -952,7 +1005,7 @@ fn library_allowed(lib: &Library) -> bool {
 }
 
 async fn install_assets(
-    app: &AppHandle,
+    app: Option<&AppHandle>,
     root: &Path,
     index: &AssetIndex,
     from: u8,
@@ -974,6 +1027,7 @@ async fn install_assets(
     let total = objects.len().max(1);
 
     for (i, (_name, meta)) in objects.iter().enumerate() {
+        ensure_not_cancelled()?;
         if meta.hash.len() < 2 {
             continue;
         }
@@ -1013,11 +1067,13 @@ async fn install_assets(
     Ok(())
 }
 
-fn emit_progress(app: &AppHandle, percent: u8, message: String) {
-    let _ = app.emit(
-        "install-progress",
-        ProgressPayload { percent, message },
-    );
+fn emit_progress(app: Option<&AppHandle>, percent: u8, message: String) {
+    if let Some(app) = app {
+        let _ = app.emit(
+            "install-progress",
+            ProgressPayload { percent, message },
+        );
+    }
 }
 
 #[derive(Clone, serde::Serialize)]

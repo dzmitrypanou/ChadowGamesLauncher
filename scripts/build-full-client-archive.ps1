@@ -2,18 +2,29 @@
 # Structure: versions/{version}/, libraries/, assets/  (+ optional mods/)
 param(
     [string]$Version = "1.21.11",
-    [string]$SourceRoot = "$env:APPDATA\ChadowGamesLauncher",
+    [string]$SourceRoot,
     [string]$OutDir = "$PSScriptRoot\..\dist",
     [switch]$SkipModBuild,
-    [switch]$Vanilla
+    [switch]$Vanilla,
+    [switch]$Download
 )
 
 $ErrorActionPreference = "Stop"
 $Root = Resolve-Path "$PSScriptRoot\.."
 $ModDir = Join-Path $Root "client-mod"
+$ReferenceRoot = Join-Path $Root "reference-client"
 $ZipName = if ($Vanilla) { "minecraft-$Version-client-vanilla.zip" } else { "minecraft-$Version-client.zip" }
 $ZipPath = Join-Path $OutDir $ZipName
 $Staging = Join-Path $env:TEMP "chadow-full-client-staging"
+
+if (-not $PSBoundParameters.ContainsKey("SourceRoot")) {
+    $refJar = Join-Path $ReferenceRoot "versions\$Version\$Version.jar"
+    if ((Test-Path $refJar) -and (Test-Path (Join-Path $ReferenceRoot "libraries")) -and (Test-Path (Join-Path $ReferenceRoot "assets"))) {
+        $SourceRoot = $ReferenceRoot
+    } else {
+        $SourceRoot = "$env:APPDATA\ChadowGamesLauncher"
+    }
+}
 
 function Write-Step($msg) { Write-Host "==> $msg" }
 
@@ -22,6 +33,31 @@ function Get-VanillaVersionJsonText([string]$McVersion) {
     $entry = $manifest.versions | Where-Object { $_.id -eq $McVersion } | Select-Object -First 1
     if (-not $entry) { throw "Version $McVersion not found in Mojang manifest" }
     return (Invoke-WebRequest -Uri $entry.url -UseBasicParsing).Content
+}
+
+$VersionDir = Join-Path $SourceRoot "versions\$Version"
+$JarPath = Join-Path $VersionDir "$Version.jar"
+$LibrariesDir = Join-Path $SourceRoot "libraries"
+$AssetsDir = Join-Path $SourceRoot "assets"
+$HasLocalInstall = (Test-Path $JarPath) -and (Test-Path $LibrariesDir) -and (Test-Path $AssetsDir)
+
+if ($Download -or (-not $Vanilla -and -not $HasLocalInstall)) {
+    if ($Vanilla) { throw "-Download is only supported for modded client packs." }
+    if (-not $SkipModBuild) {
+        Write-Step "Building Fabric mod..."
+        Push-Location $ModDir
+        try {
+            & .\gradlew.bat build --no-daemon -q
+            if ($LASTEXITCODE -ne 0) { throw "Gradle build failed" }
+        } finally {
+            Pop-Location
+        }
+    }
+    Write-Step "Downloading full client from Mojang and building ZIP..."
+    $buildZipManifest = Join-Path $Root "tools\build-client-zip\Cargo.toml"
+    & cargo run --release --manifest-path $buildZipManifest
+    if ($LASTEXITCODE -ne 0) { throw "build-client-zip failed" }
+    exit 0
 }
 
 if (-not $Vanilla) {

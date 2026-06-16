@@ -1,11 +1,14 @@
-mod bootstrap;
-mod fabric;
-mod install;
+pub mod bootstrap;
+pub mod fabric;
+pub mod install;
 mod launch;
 mod ping;
 mod profile;
 
-use install::{client_pack_needs_update, collect_classpath, ensure_java, ensure_minecraft, ClientPack};
+use install::{
+    client_pack_needs_update, collect_classpath, ensure_java, ensure_minecraft, is_version_installed,
+    read_version_details, request_install_cancel, reset_install_cancel, ClientPack,
+};
 use launch::{is_game_running, launch_game, pick_launch_server};
 use ping::PingResult;
 use profile::{
@@ -77,6 +80,47 @@ fn client_pack_update_needed(
     })
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClientInstallStatus {
+    installed: bool,
+    needsUpdate: bool,
+}
+
+#[tauri::command]
+fn client_install_status(
+    game_id: String,
+    minecraft_version: String,
+    client_pack: Option<ClientPack>,
+) -> Result<ClientInstallStatus, String> {
+    if game_id != MINECRAFT_GAME_ID {
+        return Ok(ClientInstallStatus { installed: false, needsUpdate: false });
+    }
+
+    let install_root = ensure_game_install_dirs(&game_id)?;
+    let version_dir = install_root.join("versions").join(&minecraft_version);
+    let jar_path = version_dir.join(format!("{minecraft_version}.jar"));
+    let json_path = version_dir.join(format!("{minecraft_version}.json"));
+
+    if !jar_path.exists() || !json_path.exists() {
+        return Ok(ClientInstallStatus { installed: false, needsUpdate: false });
+    }
+
+    let details = read_version_details(&json_path)?;
+    let base_installed = is_version_installed(&install_root, &minecraft_version, &details);
+
+    let needs_update = base_installed
+        && client_pack
+            .as_ref()
+            .map(|pack| client_pack_needs_update(&install_root, &minecraft_version, pack))
+            .unwrap_or(false);
+
+    Ok(ClientInstallStatus {
+        installed: base_installed,
+        needsUpdate: needs_update,
+    })
+}
+
 #[tauri::command]
 async fn set_game_install_path_cmd(
     app: AppHandle,
@@ -95,11 +139,13 @@ async fn set_game_install_path_cmd(
                 if config.enabled {
                     let version = config.minecraft_version;
                     let client_pack = config.client_pack.as_ref();
+                    let profile = read_profile();
                     if let Err(err) = ensure_minecraft(
-                        &app,
+                        Some(&app),
                         &install_root,
                         &version,
                         client_pack,
+                        profile.dev_mode,
                         |percent, message| {
                             let _ = app.emit(
                                 "install-progress",
@@ -158,6 +204,7 @@ async fn prepare_and_launch(
     server_id: Option<String>,
     bootstrap: Value,
 ) -> Result<LaunchResult, String> {
+    reset_install_cancel();
     let config: BootstrapInput = serde_json::from_value(bootstrap.clone()).map_err(|e| e.to_string())?;
     if !config.enabled {
         return Err("Лаунчер отключён администратором".to_string());
@@ -184,16 +231,33 @@ async fn prepare_and_launch(
     emit(42, "Подготовка Minecraft…");
     let version = config.minecraft_version.clone();
     let client_pack = config.client_pack.as_ref();
-    let (_jar, details) = ensure_minecraft(
-        &app,
+    let (_jar, mut details) = ensure_minecraft(
+        Some(&app),
         &install_root,
         &version,
         client_pack,
+        profile.dev_mode,
         |p, m| emit(p, m),
     )
     .await?;
 
+    if !is_version_installed(&install_root, &version, &details) {
+        emit(90, "Докачка библиотек…");
+        install::install_libraries(Some(&app), &install_root, &details.libraries, 90, 98).await?;
+        let json_path = install_root
+            .join("versions")
+            .join(&version)
+            .join(format!("{version}.json"));
+        details = read_version_details(&json_path)?;
+        if !is_version_installed(&install_root, &version, &details) {
+            return Err("Клиент установлен не полностью — не хватает библиотек".to_string());
+        }
+    }
+
     let classpath = collect_classpath(&install_root, &version, &details.libraries)?;
+    if classpath.is_empty() {
+        return Err("Не удалось собрать classpath для запуска".to_string());
+    }
     emit(100, "Запуск…");
 
     let server = pick_launch_server(&bootstrap, &game_id, server_id.as_deref());
@@ -212,6 +276,12 @@ async fn prepare_and_launch(
     )?;
 
     Ok(LaunchResult { launched: true })
+}
+
+#[tauri::command]
+fn cancel_install() -> Result<(), String> {
+    request_install_cancel();
+    Ok(())
 }
 
 #[tauri::command]
@@ -240,6 +310,7 @@ pub fn run() {
             save_profile,
             get_game_install_path,
             client_pack_update_needed,
+            client_install_status,
             set_game_install_path_cmd,
             cache_bootstrap,
             load_cached_bootstrap,
@@ -247,6 +318,7 @@ pub fn run() {
             ping_server,
             game_is_running,
             prepare_and_launch,
+            cancel_install,
             clear_all_data,
             open_url,
         ])

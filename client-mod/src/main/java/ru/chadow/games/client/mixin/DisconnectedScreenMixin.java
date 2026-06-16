@@ -1,28 +1,36 @@
 package ru.chadow.games.client.mixin;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.DisconnectedScreen;
-import net.minecraft.network.chat.Component;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import ru.chadow.games.client.ChadowGamesClientMod;
 
 @Mixin(DisconnectedScreen.class)
 public abstract class DisconnectedScreenMixin {
     @Inject(method = "init", at = @At("RETURN"))
-    private void chadow$hideTitleButton(CallbackInfo ci) {
+    private void chadow$quitInsteadOfLobby(CallbackInfo ci) {
+        if (!ChadowGamesClientMod.isInGameSession()) {
+            return;
+        }
+
         DisconnectedScreen screen = (DisconnectedScreen) (Object) this;
+        Minecraft minecraft = Minecraft.getInstance();
+
         for (var child : screen.children()) {
             if (!(child instanceof Button button)) {
                 continue;
             }
-            Component message = button.getMessage();
-            String text = message.getString().toLowerCase();
-            if (text.contains("title") || text.contains("главн") || text.contains("titl")) {
-                button.visible = false;
-                button.active = false;
+
+            String text = button.getMessage().getString();
+            if (ChadowGamesClientMod.isReportButtonLabel(text)) {
+                continue;
             }
+
+            ((ButtonAccessor) button).chadow$setOnPress(btn -> minecraft.stop());
         }
     }
 }

@@ -1,0 +1,11 @@
+[package]
+name = "build-client-zip"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+chadow_games_launcher_lib = { package = "chadow-games-launcher", path = "../../src-tauri" }
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+zip = "2"

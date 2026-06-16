@@ -27,6 +27,8 @@ pub struct Profile {
     pub selected_servers: HashMap<String, String>,
     #[serde(default)]
     pub display_mode: DisplayMode,
+    #[serde(default)]
+    pub dev_mode: bool,
 }
 
 impl Default for Profile {
@@ -37,6 +39,7 @@ impl Default for Profile {
             game_install_paths: HashMap::new(),
             selected_servers: HashMap::new(),
             display_mode: DisplayMode::default(),
+            dev_mode: false,
         }
     }
 }

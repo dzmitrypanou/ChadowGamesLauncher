@@ -1,3 +1,10 @@
 node_modules/
 dist/
 src-tauri/target/
+reference-client/.cache/
+
+# Local launcher state — backup lives in reference-client/
+profile.json
+launcher.log
+minecraft-game.log
+bootstrap-cache.json

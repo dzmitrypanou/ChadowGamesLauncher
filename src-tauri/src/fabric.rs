@@ -27,8 +27,7 @@ pub fn mods_dir(root: &Path) -> PathBuf {
     root.join("instances").join("default").join("mods")
 }
 
-pub fn has_mods(root: &Path) -> bool {
-    let dir = mods_dir(root);
+fn dir_has_mod_jars(dir: &Path) -> bool {
     if !dir.is_dir() {
         return false;
     }
@@ -43,6 +42,10 @@ pub fn has_mods(root: &Path) -> bool {
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("jar"))
         })
+}
+
+pub fn has_mods(root: &Path) -> bool {
+    dir_has_mod_jars(&mods_dir(root)) || dir_has_mod_jars(&root.join("mods"))
 }
 
 pub fn normalize_client_pack_layout(root: &Path) -> Result<(), String> {
@@ -120,7 +123,17 @@ pub async fn ensure_fabric_loader(
         return Err("Клиент Minecraft не установлен для Fabric".to_string());
     }
 
-    read_version_details(&json_path)
+    let details = read_version_details(&json_path)?;
+    if !crate::install::is_version_installed(root, version, &details) {
+        crate::install::install_libraries(app, root, &details.libraries, 95, 98).await?;
+        let details = read_version_details(&json_path)?;
+        if !crate::install::is_version_installed(root, version, &details) {
+            return Err("Не удалось установить библиотеки Fabric-клиента".to_string());
+        }
+        return Ok(details);
+    }
+
+    Ok(details)
 }
 
 async fn fetch_vanilla_version_json(version: &str) -> Result<Value, String> {

@@ -1,6 +1,5 @@
 package ru.chadow.games.client.mixin;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.PauseScreen;
 import org.spongepowered.asm.mixin.Mixin;
@@ -25,12 +24,6 @@ public abstract class PauseScreenMixin {
                 button.active = false;
             }
         }
-    }
-
-    @Inject(method = "onDisconnect", at = @At("HEAD"), cancellable = true)
-    private void chadow$quitLauncherOnLeaveWorld(CallbackInfo ci) {
-        Minecraft.getInstance().stop();
-        ci.cancel();
     }
 
     private static boolean isTitleMenuLabel(String text) {
