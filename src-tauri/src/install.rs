@@ -151,7 +151,6 @@ pub async fn ensure_java(
         return Ok(java_home_bin(&home));
     }
 
-    // Broken partial install (e.g. only bin/ copied without lib/)
     if java_dir.exists() {
         log_line(&format!("Removing broken Java {major} install"));
         let _ = fs::remove_dir_all(&java_dir);

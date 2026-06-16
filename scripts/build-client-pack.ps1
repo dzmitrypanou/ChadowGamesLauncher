@@ -1,4 +1,4 @@
-# Build Fabric mod and mods-only client pack zip for the launcher.
+
 param(
     [string]$Version = "1.0.0",
     [string]$OutDir = "$PSScriptRoot\..\dist"

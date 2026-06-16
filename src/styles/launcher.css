@@ -1,4 +1,4 @@
-/* Title bar */
+
 .titlebar {
   display: flex;
   align-items: stretch;
@@ -102,7 +102,6 @@
   color: #fff;
 }
 
-/* Main layout */
 .launcher-main {
   flex: 1;
   display: flex;
@@ -122,7 +121,6 @@
   border-radius: 999px;
 }
 
-/* Hero / profile */
 .hero-panel {
   border-radius: var(--radius-lg);
   background: linear-gradient(135deg, rgba(22, 34, 58, 0.9) 0%, rgba(14, 22, 40, 0.82) 100%);
@@ -237,7 +235,6 @@
   visibility: visible;
 }
 
-/* Sections */
 .section-head {
   margin-bottom: 12px;
 }
@@ -263,7 +260,6 @@
   color: var(--ui-text-dim);
 }
 
-/* Game grid */
 .game-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -406,7 +402,6 @@
   font-weight: 700;
 }
 
-/* Server carousel */
 .server-carousel {
   position: relative;
   display: grid;
@@ -628,7 +623,6 @@
   font-weight: 700;
 }
 
-/* Buttons */
 .btn {
   border: 1px solid transparent;
   cursor: pointer;
@@ -664,7 +658,6 @@
   margin-bottom: 8px;
 }
 
-/* Progress */
 .footer-status {
   flex: 1;
   min-width: 0;
@@ -695,7 +688,6 @@
   transition: width 0.22s ease;
 }
 
-/* Footer */
 .launcher-footer {
   flex-shrink: 0;
   padding-top: 8px;
@@ -796,7 +788,6 @@
   box-shadow: 0 6px 18px rgba(78, 207, 154, 0.28);
 }
 
-/* Settings modal */
 .settings-title {
   font-size: 0.92rem;
   font-weight: 600;

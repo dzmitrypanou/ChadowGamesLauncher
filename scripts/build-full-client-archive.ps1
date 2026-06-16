@@ -1,5 +1,5 @@
-# Build full Minecraft client ZIP for chadow.ru/admin/minecraft upload.
-# Structure: versions/{version}/, libraries/, assets/  (+ optional mods/)
+
+
 param(
     [string]$Version = "1.21.11",
     [string]$SourceRoot,

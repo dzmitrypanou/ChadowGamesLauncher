@@ -160,7 +160,7 @@ fn move_path(src: &Path, dst: &Path) -> Result<(), String> {
 }
 
 fn move_minecraft_client_data(old_root: &Path, new_root: &Path) -> Result<(), String> {
-    // Move only game client payload; launcher service files stay in launcher_root.
+
     let top_level_dirs = ["versions", "libraries", "assets", "mods", "instances", "natives"];
     for dir_name in top_level_dirs {
         let src = old_root.join(dir_name);

@@ -1,4 +1,4 @@
-# Generates NSIS installer header/sidebar bitmaps from launcher logo.
+
 param(
     [string]$LogoPath = "$PSScriptRoot\..\src\assets\logo.png",
     [string]$OutDir = "$PSScriptRoot\..\src-tauri\icons"

@@ -16,7 +16,6 @@ const PLAY_LABEL_RUNNING = 'Запущено';
 const DISPLAY_MODE_WINDOWED = 'windowed';
 const DISPLAY_MODE_FULLSCREEN = 'fullscreen';
 
-/** Games shown before API support exists */
 const PLACEHOLDER_GAMES = [
   {
     id: 'unknown',
@@ -83,23 +82,21 @@ const els = {
   closeBtn: document.getElementById('closeBtn'),
 };
 
-/** @type {Record<string, unknown>|null} */
 let bootstrap = null;
-/** @type {{ nickname: string, apiUrl: string, gameInstallPaths?: Record<string, string>, selectedServers?: Record<string, string> }|null} */
+
 let profile = null;
 let launcherBusy = false;
 let gameRunning = false;
-/** @type {{ gameId: string, percent: number, message: string } | null} */
+
 let installJob = null;
-/** @type {{ percent: number, message: string } | null} */
+
 let transientProgress = null;
 
-/** @type {Array<{ id: string, name: string, subtitle: string, playable: boolean, badge?: string, accent: string, glyph: string, servers: Array<{ key: string, name: string, host: string, port: number }> }>} */
 let gameCatalog = [];
 let selectedGameId = 'minecraft';
-/** @type {Record<string, string>} */
+
 let selectedServerKeys = {};
-/** @type {Record<string, { installed: boolean, needsUpdate: boolean }>} */
+
 const clientStatusByGame = {};
 
 function getClientStatus(gameId = selectedGameId) {
@@ -158,7 +155,7 @@ function resolveServerIcon(icon) {
   const raw = String(icon || '').trim();
   if (!raw) return null;
   if (SERVER_ICON_PRESETS[raw]) return { type: 'glyph', value: SERVER_ICON_PRESETS[raw] };
-  if (/^https?:\/\//i.test(raw) || raw.startsWith('/')) {
+  if (/^https?:\/\
     const url = raw.startsWith('/') ? `https://chadow.ru${raw}` : raw;
     return { type: 'image', value: url };
   }
@@ -482,7 +479,7 @@ async function requestServerWake(serverId = null) {
       serverId: serverId || null,
     });
   } catch {
-    // wake is best-effort
+
   }
 }
 
@@ -758,7 +755,7 @@ async function refreshBootstrap() {
     const cached = await invoke('load_cached_bootstrap');
     if (cached) applyBootstrap(cached);
   } catch {
-    // ignore cache read errors
+
   }
 
   try {
@@ -852,7 +849,7 @@ async function handleCancelInstall() {
   try {
     await invoke('cancel_install');
   } catch {
-    // ignore cancel errors
+
   }
 }
 
@@ -979,7 +976,7 @@ async function closeSettings(save = true) {
     try {
       await saveProfile();
     } catch {
-      // ignore save errors
+
     }
   }
   els.settingsModal.hidden = true;
@@ -1074,7 +1071,7 @@ async function init() {
   try {
     const { listen } = await import('@tauri-apps/api/event');
     await listen('install-progress', ({ payload }) => {
-      const p = /** @type {{ percent: number, message: string }} */ (payload);
+      const p =  (payload);
       if (installJob) {
         setInstallProgress(p.percent, p.message);
       }
@@ -1083,21 +1080,21 @@ async function init() {
       setPlayButtonRunning(false);
     });
   } catch {
-    // Browser preview
+
   }
 
   try {
     const running = await invoke('game_is_running');
     if (running) setPlayButtonRunning(true);
   } catch {
-    // ignore
+
   }
 
   try {
     await loadProfile();
     updatePlayState();
   } catch {
-    // ignore profile load errors
+
   }
 
   applyLauncherVersion(APP_VERSION);

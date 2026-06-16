@@ -1,5 +1,5 @@
-# Copy Minecraft client payload from launcher AppData into the repo backup folder.
-# Keeps versions/, libraries/, assets/, natives/ and injects the latest mod jar.
+
+
 param(
     [string]$SourceRoot = "$env:APPDATA\ChadowGamesLauncher",
     [string]$Version = "1.21.11",
