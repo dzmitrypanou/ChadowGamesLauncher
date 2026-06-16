@@ -5,12 +5,16 @@ use tokio::time::sleep;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(3);
 const WAIT_TIMEOUT: Duration = Duration::from_secs(180);
+const REQUIRED_STREAK: u32 = 3;
+const STREAK_INTERVAL: Duration = Duration::from_secs(2);
+const READY_HOLD: Duration = Duration::from_secs(8);
 
 pub async fn wait_for_server_online<F>(host: &str, port: u16, mut on_progress: F) -> Result<(), String>
 where
     F: FnMut(&str),
 {
     let started = Instant::now();
+    let mut streak = 0u32;
     on_progress("Запуск сервера…");
 
     loop {
@@ -26,10 +30,34 @@ where
         }
 
         if ping_server(host, port).await.online {
-            on_progress("Сервер готов");
-            return Ok(());
+            streak += 1;
+            if streak < REQUIRED_STREAK {
+                on_progress(&format!(
+                    "Сервер загружается… ({streak}/{REQUIRED_STREAK})"
+                ));
+                sleep(STREAK_INTERVAL).await;
+                continue;
+            }
+
+            on_progress("Подготовка входа…");
+            sleep(READY_HOLD).await;
+
+            if is_install_cancelled() {
+                return Err("Установка отменена".to_string());
+            }
+
+            if ping_server(host, port).await.online {
+                on_progress("Сервер готов");
+                return Ok(());
+            }
+
+            streak = 0;
+            on_progress("Сервер перезапускается…");
+            sleep(POLL_INTERVAL).await;
+            continue;
         }
 
+        streak = 0;
         let secs = started.elapsed().as_secs();
         let message = if secs < 15 {
             "Запуск сервера…".to_string()

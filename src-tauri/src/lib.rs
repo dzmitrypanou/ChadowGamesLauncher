@@ -255,14 +255,7 @@ async fn prepare_and_launch(
         emit(1, &format!("Сервер: {err}"));
     }
 
-    if let Some((host, port)) = server.as_ref() {
-        server_wait::wait_for_server_online(host, *port, |message| {
-            emit(5, message);
-        })
-        .await?;
-    }
-
-    emit(10, "Подготовка Java…");
+    emit(5, "Подготовка Java…");
     let java_exe = ensure_java(&app, config.java_major, |p, m| emit(p, m)).await?;
 
     emit(42, "Подготовка Minecraft…");
@@ -294,6 +287,13 @@ async fn prepare_and_launch(
     let classpath = collect_classpath(&install_root, &version, &details.libraries)?;
     if classpath.is_empty() {
         return Err("Не удалось собрать classpath для запуска".to_string());
+    }
+
+    if let Some((host, port)) = server.as_ref() {
+        server_wait::wait_for_server_online(host, *port, |message| {
+            emit(95, message);
+        })
+        .await?;
     }
 
     emit(100, "Запуск…");

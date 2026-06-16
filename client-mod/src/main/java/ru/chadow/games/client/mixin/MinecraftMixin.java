@@ -10,6 +10,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import ru.chadow.games.client.ChadowGamesClientMod;
+import ru.chadow.games.client.PendingServerConnect;
 
 @Mixin(Minecraft.class)
 public abstract class MinecraftMixin {
@@ -24,6 +25,7 @@ public abstract class MinecraftMixin {
 
     @Inject(method = "tick", at = @At("HEAD"))
     private void chadow$trackWorld(CallbackInfo ci) {
+        PendingServerConnect.onClientTick((Minecraft) (Object) this);
         if (this.level != null) {
             ChadowGamesClientMod.markInWorld();
         }
