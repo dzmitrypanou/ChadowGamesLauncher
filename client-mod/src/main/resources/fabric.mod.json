@@ -3,7 +3,7 @@
   "id": "chadow_games_client",
   "version": "${version}",
   "name": "Chadow Games Client",
-  "description": "Chadow Games Launcher in-game UI: branding and restricted menus.",
+  "description": "Chadow Games Launcher client restrictions.",
   "authors": ["Chadow"],
   "contact": {
     "homepage": "https://chadow.ru"

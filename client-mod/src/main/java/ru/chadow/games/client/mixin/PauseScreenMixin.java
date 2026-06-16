@@ -13,7 +13,6 @@ public abstract class PauseScreenMixin {
     @Inject(method = "createPauseMenu", at = @At("RETURN"))
     private void chadow$customizePauseMenu(CallbackInfo ci) {
         PauseScreen screen = (PauseScreen) (Object) this;
-        Minecraft minecraft = Minecraft.getInstance();
 
         for (var child : screen.children()) {
             if (!(child instanceof Button button)) {
@@ -21,11 +20,6 @@ public abstract class PauseScreenMixin {
             }
 
             String text = button.getMessage().getString().toLowerCase();
-            if (isDisconnectLabel(text)) {
-                ((ButtonAccessor) button).chadow$setOnPress(pressed -> minecraft.stop());
-                continue;
-            }
-
             if (isTitleMenuLabel(text)) {
                 button.visible = false;
                 button.active = false;
@@ -33,10 +27,10 @@ public abstract class PauseScreenMixin {
         }
     }
 
-    private static boolean isDisconnectLabel(String text) {
-        return text.contains("disconnect")
-                || text.contains("отключ")
-                || text.contains("отсоедин");
+    @Inject(method = "onDisconnect", at = @At("HEAD"), cancellable = true)
+    private void chadow$quitLauncherOnLeaveWorld(CallbackInfo ci) {
+        Minecraft.getInstance().stop();
+        ci.cancel();
     }
 
     private static boolean isTitleMenuLabel(String text) {

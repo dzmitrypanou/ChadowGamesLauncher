@@ -95,7 +95,7 @@ async fn set_game_install_path_cmd(
                 if config.enabled {
                     let version = config.minecraft_version;
                     let client_pack = config.client_pack.as_ref();
-                    let _ = ensure_minecraft(
+                    if let Err(err) = ensure_minecraft(
                         &app,
                         &install_root,
                         &version,
@@ -107,7 +107,16 @@ async fn set_game_install_path_cmd(
                             );
                         },
                     )
-                    .await?;
+                    .await
+                    {
+                        let _ = app.emit(
+                            "install-progress",
+                            serde_json::json!({
+                                "percent": 0,
+                                "message": format!("Папка сохранена, но докачка не удалась: {err}")
+                            }),
+                        );
+                    }
                 }
             }
         }

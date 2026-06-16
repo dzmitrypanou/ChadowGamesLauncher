@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -568,6 +568,8 @@ pub(crate) async fn download_file_resumable(
         };
 
         let mut downloaded = offset;
+        let started_at = Instant::now();
+        let mut last_emit_at = Instant::now();
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| e.to_string())?;
@@ -579,11 +581,23 @@ pub(crate) async fn download_file_resumable(
                     if total > 0 {
                         let ratio = downloaded as f64 / total as f64;
                         let pct = from + ((to.saturating_sub(from)) as f64 * ratio) as u8;
-                        emit_progress(
-                            app,
-                            pct,
-                            format!("{label} ({downloaded}/{total} байт)"),
-                        );
+                        let elapsed = started_at.elapsed().as_secs_f64().max(0.001);
+                        let speed = downloaded as f64 / elapsed;
+                        let now = Instant::now();
+                        if now.duration_since(last_emit_at) >= Duration::from_millis(200) || downloaded >= total {
+                            last_emit_at = now;
+                            emit_progress(
+                                app,
+                                pct,
+                                format!(
+                                    "{label} {ratio_pct:.1}% · {done_mb:.1}/{total_mb:.1} MB · {speed_mb:.2} MB/s",
+                                    ratio_pct = ratio * 100.0,
+                                    done_mb = downloaded as f64 / (1024.0 * 1024.0),
+                                    total_mb = total as f64 / (1024.0 * 1024.0),
+                                    speed_mb = speed / (1024.0 * 1024.0),
+                                ),
+                            );
+                        }
                     }
                 }
             }

@@ -761,7 +761,9 @@ async function pickInstallFolder(gameId) {
       title: `Папка установки — ${game?.name || gameId}`,
       defaultPath: info?.path || undefined,
     });
-  } catch {
+  } catch (err) {
+    setProgress(true, 0, String(err || 'Не удалось открыть выбор папки'));
+    setTimeout(() => setProgress(false), 5000);
     return;
   }
 
