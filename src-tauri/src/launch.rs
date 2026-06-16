@@ -263,15 +263,48 @@ fn resolve_args(
     out
 }
 
-fn primary_screen_size(app: &AppHandle) -> (u32, u32) {
+fn primary_screen_work_area(app: &AppHandle) -> (i32, i32, u32, u32) {
     app.primary_monitor()
         .ok()
         .flatten()
         .map(|monitor| {
             let area = monitor.work_area();
-            (area.size.width, area.size.height)
+            (
+                area.position.x,
+                area.position.y,
+                area.size.width,
+                area.size.height,
+            )
         })
-        .unwrap_or((1920, 1080))
+        .unwrap_or((0, 0, 1920, 1080))
+}
+
+fn primary_screen_size(app: &AppHandle) -> (u32, u32) {
+    let (_, _, width, height) = primary_screen_work_area(app);
+    (width, height)
+}
+
+const DISPLAY_CONFIG_FILE: &str = "chadow-display.txt";
+
+fn write_display_config(
+    game_dir: &Path,
+    display_mode: DisplayMode,
+    work_area: (i32, i32, u32, u32),
+) -> Result<(), String> {
+    let path = game_dir.join(DISPLAY_CONFIG_FILE);
+    match display_mode {
+        DisplayMode::Fullscreen => {
+            let (x, y, width, height) = work_area;
+            std::fs::write(path, format!("borderless {x} {y} {width} {height}"))
+                .map_err(|e| e.to_string())
+        }
+        DisplayMode::Windowed => {
+            if path.exists() {
+                std::fs::remove_file(path).map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        }
+    }
 }
 
 fn set_game_option(lines: &mut Vec<String>, key: &str, value: &str) {
@@ -283,7 +316,11 @@ fn set_game_option(lines: &mut Vec<String>, key: &str, value: &str) {
     }
 }
 
-fn apply_fullscreen_option(game_dir: &Path, fullscreen: bool) -> Result<(), String> {
+fn apply_display_options(
+    game_dir: &Path,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
     let path = game_dir.join("options.txt");
     let mut lines: Vec<String> = if path.exists() {
         std::fs::read_to_string(&path)
@@ -295,14 +332,14 @@ fn apply_fullscreen_option(game_dir: &Path, fullscreen: bool) -> Result<(), Stri
         Vec::new()
     };
 
-    set_game_option(
-        &mut lines,
-        "fullscreen",
-        if fullscreen { "true" } else { "false" },
-    );
+    set_game_option(&mut lines, "fullscreen", "false");
+    set_game_option(&mut lines, "overrideWidth", &width.to_string());
+    set_game_option(&mut lines, "overrideHeight", &height.to_string());
 
     let contents = if lines.is_empty() {
-        format!("fullscreen:{}", fullscreen)
+        format!(
+            "fullscreen:false\noverrideWidth:{width}\noverrideHeight:{height}"
+        )
     } else {
         lines.join("\n")
     };
@@ -394,19 +431,21 @@ pub fn launch_game(
     std::fs::create_dir_all(&assets_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&natives).map_err(|e| e.to_string())?;
 
-    let work_area_size = primary_screen_size(app);
-    // Exclusive Minecraft fullscreen covers the taskbar on Windows; use work-area resolution instead.
-    let window_size = Some(work_area_size);
-    apply_fullscreen_option(&game_dir, false)?;
+    let work_area = primary_screen_work_area(app);
+    let window_size = primary_screen_size(app);
+    write_display_config(&game_dir, display_mode, work_area)?;
+    apply_display_options(&game_dir, window_size.0, window_size.1)?;
     log_line(&format!(
-        "Display mode: {}, resolution: {}x{}",
+        "Display mode: {}, work area: {}x{} at ({}, {})",
         if display_mode == DisplayMode::Fullscreen {
-            "fullscreen"
+            "borderless"
         } else {
             "windowed"
         },
-        work_area_size.0,
-        work_area_size.1
+        window_size.0,
+        window_size.1,
+        work_area.0,
+        work_area.1
     ));
 
     let uuid = offline_uuid(username);
@@ -430,9 +469,7 @@ pub fn launch_game(
     vars.insert("auth_xuid", String::new());
     vars.insert("clientid", String::new());
     vars.insert("version_type", "release".to_string());
-    let (resolution_width, resolution_height) = window_size
-        .map(|(width, height)| (width.to_string(), height.to_string()))
-        .unwrap_or_default();
+    let (resolution_width, resolution_height) = (window_size.0.to_string(), window_size.1.to_string());
     vars.insert("resolution_width", resolution_width);
     vars.insert("resolution_height", resolution_height);
     vars.insert("quickPlayPath", String::new());
@@ -445,7 +482,7 @@ pub fn launch_game(
     );
     vars.insert("quickPlayRealms", String::new());
 
-    let features = launch_features(server, window_size.is_some());
+    let features = launch_features(server, true);
 
     let java_path = java_gui_exe(java_exe);
     let mut cmd = Command::new(&java_path);
@@ -491,7 +528,7 @@ pub fn launch_game(
             &details.asset_index.id,
             &vars["auth_uuid"],
             server,
-            window_size,
+            Some(window_size),
         ) {
             cmd.arg(arg);
         }
