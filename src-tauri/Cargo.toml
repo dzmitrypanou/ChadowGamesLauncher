@@ -1,0 +1,34 @@
+[package]
+name = "chadow-games-launcher"
+version = "3.2.2"
+description = "Chadow Games Launcher"
+authors = ["Chadow"]
+edition = "2021"
+
+[lib]
+name = "chadow_games_launcher_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+open = "5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+uuid = { version = "1", features = ["v3"] }
+dirs = "6"
+futures-util = "0.3"
+zip = "2"
+sha1 = "0.10"
+sha2 = "0.10"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+strip = true

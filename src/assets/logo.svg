@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 512 512" role="img" aria-label="Chadow logo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0A1022"/>
+      <stop offset="100%" stop-color="#1A3C72"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#36E0FF"/>
+      <stop offset="100%" stop-color="#74F6C8"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="100" fill="url(#bg)"/>
+  <g transform="translate(76 150)">
+    <rect x="0" y="190" width="250" height="22" rx="11" fill="#0D1935"/>
+    <circle cx="56" cy="201" r="20" fill="#36E0FF"/>
+    <circle cx="126" cy="201" r="20" fill="#36E0FF"/>
+    <circle cx="196" cy="201" r="20" fill="#36E0FF"/>
+    <path d="M16 150h168l34-38h52l14 16h36v24h-20l-16 18H16z" fill="#F1F8FF"/>
+    <rect x="118" y="126" width="88" height="8" rx="4" fill="#74F6C8"/>
+  </g>
+  <path d="M304 340l36-20 34 10 32-38 34 16 36-28" fill="none" stroke="url(#accent)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

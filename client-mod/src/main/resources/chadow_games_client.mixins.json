@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "ru.chadow.games.client.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "MinecraftMixin",
+    "InGameHudMixin",
+    "DisconnectedScreenMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "chadow_games_client",
+  "version": "1.0.0",
+  "name": "Chadow Games Client",
+  "description": "Chadow Games Launcher in-game UI: branding and restricted menus.",
+  "authors": ["Chadow"],
+  "contact": {
+    "homepage": "https://chadow.ru"
+  },
+  "license": "All-Rights-Reserved",
+  "icon": "assets/chadow_games_client/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "ru.chadow.games.client.ChadowGamesClientMod"
+    ]
+  },
+  "mixins": [
+    "chadow_games_client.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.2",
+    "minecraft": "~1.21.11",
+    "java": ">=21"
+  }
+}

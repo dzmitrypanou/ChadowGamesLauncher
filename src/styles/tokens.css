@@ -1,0 +1,20 @@
+:root {
+  --bg-0: #0a1022;
+  --bg-1: #0d1a35;
+  --bg-2: #162f5e;
+  --glow-cyan: #36e0ff;
+  --glow-mint: #74f6c8;
+  --ui-bg-1: rgba(20, 30, 57, 0.84);
+  --ui-bg-2: rgba(14, 21, 40, 0.8);
+  --ui-border: rgba(113, 163, 230, 0.26);
+  --ui-border-strong: rgba(126, 184, 255, 0.44);
+  --ui-text-main: #dbe9f7;
+  --ui-text-dim: #9bb0c5;
+  --ui-accent: #64b5f6;
+  --ui-accent-strong: #4a90e2;
+  --ui-accent-soft: rgba(100, 181, 246, 0.2);
+  --ui-danger: #ff9b9b;
+  --ui-shadow: 0 14px 32px rgba(4, 10, 22, 0.32), inset 0 1px 0 rgba(188, 220, 255, 0.08);
+  --radius: 0;
+  --transition: 0.22s ease;
+}

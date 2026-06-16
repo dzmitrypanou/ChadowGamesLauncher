@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chadow Games Launcher</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/src/styles/tokens.css" />
+  <link rel="stylesheet" href="/src/styles/base.css" />
+  <link rel="stylesheet" href="/src/styles/launcher.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="titlebar">
+      <div class="titlebar-left" data-tauri-drag-region>
+        <img src="/src/assets/logo.svg" alt="" class="titlebar-logo" width="28" height="28" />
+        <div class="titlebar-titles">
+          <span class="titlebar-name">Chadow Games Launcher</span>
+        </div>
+      </div>
+      <div class="titlebar-right">
+        <span id="launcherVersion" class="titlebar-version mono">—</span>
+        <button type="button" id="settingsBtn" class="titlebar-icon-btn" title="Настройки" aria-label="Настройки">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" stroke="currentColor" stroke-width="1.8"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 5 15.4a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.36 0 .7.13.96.36.26.23.43.55.47.89H21a2 2 0 1 1 0 4h-.09c-.67 0-1.27.38-1.51 1Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <div class="titlebar-window-controls">
+          <button type="button" id="minimizeBtn" class="titlebar-win-btn" title="Свернуть" aria-label="Свернуть">
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" stroke-width="1.2"/></svg>
+          </button>
+          <button type="button" id="closeBtn" class="titlebar-win-btn titlebar-win-btn-close" title="Закрыть" aria-label="Закрыть">
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1 9 9M9 1 1 9" stroke="currentColor" stroke-width="1.2"/></svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <div class="launcher">
+      <main class="launcher-main">
+        <section class="panel auth-panel">
+          <label class="field-label" for="nickname">Никнейм</label>
+          <div class="auth-row">
+            <div class="nickname-field">
+              <input type="text" id="nickname" class="field-input field-input--nickname" maxlength="24" autocomplete="username" placeholder="Player" spellcheck="false" />
+              <button type="button" id="nicknameWarn" class="nickname-warn" hidden tabindex="-1" aria-label="">
+                <span class="nickname-warn-mark" aria-hidden="true">!</span>
+                <span class="nickname-warn-tip" role="tooltip"></span>
+              </button>
+            </div>
+            <button type="button" id="wgBtn" class="btn btn-secondary btn-compact auth-api-btn" disabled>Wargaming API</button>
+            <button type="button" id="lestaBtn" class="btn btn-secondary btn-compact auth-api-btn" disabled>Lesta API</button>
+          </div>
+        </section>
+
+        <section class="panel games-panel" id="gamesPanel">
+          <div class="games-table-wrap">
+            <table class="games-table">
+              <thead>
+                <tr>
+                  <th>Игра</th>
+                  <th>Сервер</th>
+                  <th>Слоты</th>
+                  <th>Пинг</th>
+                </tr>
+              </thead>
+              <tbody id="gamesTableBody">
+                <tr class="games-row games-row-empty">
+                  <td colspan="4">Загрузка…</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="progress-wrap" id="progressWrap" hidden>
+            <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+            <p id="progressText" class="progress-text mono">—</p>
+          </div>
+        </section>
+      </main>
+
+      <footer class="launcher-footer">
+        <button type="button" id="playBtn" class="btn btn-primary btn-play" disabled>
+          ▶ Играть
+        </button>
+      </footer>
+    </div>
+
+    <div class="settings-modal" id="settingsModal" hidden aria-hidden="true">
+      <button type="button" class="settings-modal-backdrop" id="settingsBackdrop" aria-label="Закрыть настройки"></button>
+      <div class="settings-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+        <div class="settings-modal-header">
+          <h3 class="settings-title" id="settingsModalTitle">Настройки</h3>
+          <button type="button" id="settingsCloseBtn" class="settings-modal-close" aria-label="Закрыть">
+            <svg width="12" height="12" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1 9 9M9 1 1 9" stroke="currentColor" stroke-width="1.4"/></svg>
+          </button>
+        </div>
+        <div class="settings-modal-body">
+          <label class="field-label" for="ramSlider">Оперативная память: <span id="ramLabel">4</span> GB</label>
+          <input type="range" id="ramSlider" min="2" max="8" step="1" value="4" />
+        </div>
+        <div class="settings-modal-footer">
+          <button type="button" id="settingsSaveBtn" class="btn btn-primary">Сохранить</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
