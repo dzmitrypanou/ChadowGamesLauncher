@@ -1,4 +1,4 @@
-use crate::profile::game_root;
+use crate::profile::launcher_root;
 use futures_util::StreamExt;
 use reqwest::header::RANGE;
 use reqwest::StatusCode;
@@ -108,7 +108,7 @@ struct AssetObject {
 
 fn log_line(message: &str) {
     let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
-        let path = game_root().join("launcher.log");
+        let path = launcher_root().join("launcher.log");
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -123,7 +123,7 @@ pub async fn ensure_java(
     major: u32,
     emit: impl Fn(u8, &str),
 ) -> Result<PathBuf, String> {
-    let java_dir = game_root().join("java").join(format!("{major}"));
+    let java_dir = launcher_root().join("java").join(format!("{major}"));
     if let Some(home) = find_java_home(&java_dir) {
         return Ok(java_home_bin(&home));
     }
@@ -186,20 +186,59 @@ fn find_java_home(java_dir: &Path) -> Option<PathBuf> {
     None
 }
 
+fn client_pack_stamp_path(root: &Path, version: &str) -> PathBuf {
+    root.join(".cache").join(format!("applied-pack-{version}.sha256"))
+}
+
+fn read_applied_client_pack_sha256(root: &Path, version: &str) -> Option<String> {
+    let path = client_pack_stamp_path(root, version);
+    fs::read_to_string(path)
+        .ok()
+        .map(|value| value.trim().to_lowercase())
+        .filter(|value| !value.is_empty())
+}
+
+fn write_applied_client_pack_sha256(root: &Path, version: &str, sha256: &str) -> Result<(), String> {
+    let sha256 = sha256.trim().to_lowercase();
+    if sha256.is_empty() {
+        return Ok(());
+    }
+    let path = client_pack_stamp_path(root, version);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(path, sha256).map_err(|e| e.to_string())
+}
+
+fn client_pack_needs_update(root: &Path, version: &str, pack: &ClientPack) -> bool {
+    if pack.version != version || pack.url.trim().is_empty() {
+        return false;
+    }
+    let expected = pack.sha256.trim().to_lowercase();
+    if expected.is_empty() {
+        return true;
+    }
+    read_applied_client_pack_sha256(root, version).as_deref() != Some(expected.as_str())
+}
+
 pub async fn ensure_minecraft(
     app: &AppHandle,
+    install_root: &Path,
     version: &str,
     client_pack: Option<&ClientPack>,
     emit: impl Fn(u8, &str),
 ) -> Result<(PathBuf, VersionDetails), String> {
-    let root = game_root();
+    let root = install_root.to_path_buf();
     let version_dir = root.join("versions").join(version);
     let jar_path = version_dir.join(format!("{version}.jar"));
     let json_path = version_dir.join(format!("{version}.json"));
 
     if jar_path.exists() && json_path.exists() {
         if let Ok(mut details) = read_version_details(&json_path) {
-            if is_version_installed(&root, version, &details) {
+            let pack_update = client_pack
+                .map(|pack| client_pack_needs_update(&root, version, pack))
+                .unwrap_or(false);
+            if is_version_installed(&root, version, &details) && !pack_update {
                 if crate::fabric::has_mods(&root) {
                     emit(95, "Подготовка Fabric…");
                     details = crate::fabric::ensure_fabric_loader(Some(app), &root, version, "0.18.2")
@@ -208,7 +247,11 @@ pub async fn ensure_minecraft(
                 emit(99, "Клиент уже установлен");
                 return Ok((jar_path, details));
             }
-            log_line(&format!("Incomplete install for {version}, resuming download"));
+            if pack_update {
+                log_line(&format!("Client pack update available for {version}"));
+            } else {
+                log_line(&format!("Incomplete install for {version}, resuming download"));
+            }
         }
     }
 
@@ -385,6 +428,8 @@ async fn download_and_extract_client_pack(
     if !is_version_installed(root, version, &details) {
         return Err("Архив распакован не полностью".to_string());
     }
+
+    write_applied_client_pack_sha256(root, version, &pack.sha256)?;
 
     emit(99, "Клиент установлен из архива");
     Ok(ClientPackResult::Full(details))
@@ -837,8 +882,35 @@ fn artifact_destination(root: &Path, artifact: &DownloadEntry) -> PathBuf {
     }
 }
 
+pub(crate) fn maven_library_path(root: &Path, name: &str) -> Option<PathBuf> {
+    let parts: Vec<&str> = name.split(':').collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    let (group, artifact, version) = (parts[0], parts[1], parts[2]);
+    let file_name = if parts.len() > 3 {
+        format!("{artifact}-{}-{}.jar", parts[2], parts[3..].join("-"))
+    } else {
+        format!("{artifact}-{version}.jar")
+    };
+    let rel = format!(
+        "{}/{}/{}/{}",
+        group.replace('.', "/"),
+        artifact,
+        version,
+        file_name
+    );
+    Some(root.join("libraries").join(rel))
+}
+
 fn library_file_path(root: &Path, lib: &Library) -> Option<PathBuf> {
-    Some(library_destination(root, lib, library_artifact(lib)?))
+    if let Some(artifact) = library_artifact(lib) {
+        let path = library_destination(root, lib, artifact);
+        if artifact.path.is_some() || path.exists() {
+            return Some(path);
+        }
+    }
+    maven_library_path(root, &lib.name)
 }
 
 fn is_native_library(name: &str) -> bool {
@@ -1009,16 +1081,28 @@ fn extract_native_jar(jar_path: &Path, dest: &Path) -> Result<(), String> {
 
 pub fn collect_classpath(root: &Path, version: &str, libraries: &[Library]) -> Result<String, String> {
     let mut paths = Vec::new();
+    let mut fabric_loader = None;
+
     for lib in libraries {
         if !library_allowed(lib) || is_native_library(&lib.name) {
             continue;
         }
         if let Some(path) = library_file_path(root, lib) {
-            if path.exists() {
+            if !path.exists() {
+                continue;
+            }
+            if lib.name.starts_with("net.fabricmc:fabric-loader:") {
+                fabric_loader = Some(path);
+            } else {
                 paths.push(path);
             }
         }
     }
+
+    if let Some(loader) = fabric_loader {
+        paths.insert(0, loader);
+    }
+
     paths.push(
         root.join("versions")
             .join(version)

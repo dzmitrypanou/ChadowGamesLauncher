@@ -3,7 +3,8 @@ package ru.chadow.games.client;
 import net.fabricmc.api.ClientModInitializer;
 
 public final class ChadowGamesClientMod implements ClientModInitializer {
-    public static final String BRAND_NAME = "Chadow Games Launcher";
+    public static final String MOD_ID = "chadow_games_client";
+    public static final String BRAND_NAME = "Chadow Games";
 
     private static boolean inGameSession;
 

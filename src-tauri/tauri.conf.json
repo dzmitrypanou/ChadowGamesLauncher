@@ -14,8 +14,8 @@
     "windows": [
       {
         "title": "Chadow Games Launcher",
-        "width": 920,
-        "height": 580,
+        "width": 960,
+        "height": 640,
         "resizable": false,
         "fullscreen": false,
         "decorations": false

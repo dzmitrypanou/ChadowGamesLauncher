@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Chadow Games Launcher</title>
+  <link rel="icon" href="/src/assets/logo.png" type="image/png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
@@ -15,7 +16,7 @@
   <div class="app-shell">
     <header class="titlebar">
       <div class="titlebar-left" data-tauri-drag-region>
-        <img src="/src/assets/logo.svg" alt="" class="titlebar-logo" width="28" height="28" />
+        <img src="/src/assets/logo.png" alt="" class="titlebar-logo" width="28" height="28" />
         <div class="titlebar-titles">
           <span class="titlebar-name">Chadow Games Launcher</span>
         </div>
@@ -41,50 +42,61 @@
 
     <div class="launcher">
       <main class="launcher-main">
-        <section class="panel auth-panel">
-          <label class="field-label" for="nickname">Никнейм</label>
-          <div class="auth-row">
-            <div class="nickname-field">
-              <input type="text" id="nickname" class="field-input field-input--nickname" maxlength="24" autocomplete="username" placeholder="Player" spellcheck="false" />
-              <button type="button" id="nicknameWarn" class="nickname-warn" hidden tabindex="-1" aria-label="">
-                <span class="nickname-warn-mark" aria-hidden="true">!</span>
-                <span class="nickname-warn-tip" role="tooltip"></span>
-              </button>
+        <section class="hero-panel">
+          <div class="hero-profile">
+            <span class="hero-avatar" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.8"/>
+                <path d="M5 20c0-3.314 3.134-6 7-6s7 2.686 7 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <div class="hero-profile-text">
+              <p class="hero-eyebrow">Профиль игрока</p>
+              <div class="nickname-field nickname-field--hero">
+                <input type="text" id="nickname" class="nickname-input" maxlength="24" autocomplete="username" placeholder="Введите никнейм" spellcheck="false" />
+                <button type="button" id="nicknameWarn" class="nickname-warn" hidden tabindex="-1" aria-label="">
+                  <span class="nickname-warn-mark" aria-hidden="true">!</span>
+                  <span class="nickname-warn-tip" role="tooltip"></span>
+                </button>
+              </div>
             </div>
-            <button type="button" id="wgBtn" class="btn btn-secondary btn-compact auth-api-btn" disabled>Wargaming API</button>
-            <button type="button" id="lestaBtn" class="btn btn-secondary btn-compact auth-api-btn" disabled>Lesta API</button>
           </div>
         </section>
 
-        <section class="panel games-panel" id="gamesPanel">
-          <div class="games-table-wrap">
-            <table class="games-table">
-              <thead>
-                <tr>
-                  <th>Игра</th>
-                  <th>Сервер</th>
-                  <th>Слоты</th>
-                  <th>Пинг</th>
-                </tr>
-              </thead>
-              <tbody id="gamesTableBody">
-                <tr class="games-row games-row-empty">
-                  <td colspan="4">Загрузка…</td>
-                </tr>
-              </tbody>
-            </table>
+        <section class="games-section">
+          <div class="section-head">
+            <h2 class="section-title">Выбор игры</h2>
+            <p class="section-hint">Выберите проект и запустите клиент</p>
           </div>
-          <div class="progress-wrap" id="progressWrap" hidden>
-            <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-            <p id="progressText" class="progress-text mono">—</p>
+          <div id="gameGrid" class="game-grid" role="listbox" aria-label="Список игр"></div>
+        </section>
+
+        <section class="server-panel" id="serverPanel" hidden>
+          <div class="section-head section-head--compact">
+            <h3 class="section-title section-title--sm" id="serverPanelTitle">Сервер</h3>
           </div>
+          <div id="serverList" class="server-list"></div>
         </section>
       </main>
 
       <footer class="launcher-footer">
-        <button type="button" id="playBtn" class="btn btn-primary btn-play" disabled>
-          ▶ Играть
-        </button>
+        <div class="progress-panel" id="progressWrap" hidden>
+          <div class="progress-head">
+            <span class="progress-title">Загрузка</span>
+            <span id="progressPercent" class="progress-percent mono">0%</span>
+          </div>
+          <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="progress-fill" id="progressFill"></div>
+          </div>
+          <p id="progressText" class="progress-detail">Подготовка…</p>
+        </div>
+        <div class="launcher-footer-row">
+          <p id="statusHint" class="status-hint">Выберите игру и введите никнейм</p>
+          <button type="button" id="playBtn" class="btn btn-primary btn-play" disabled>
+            <span class="btn-play-icon" aria-hidden="true">▶</span>
+            <span id="playBtnLabel">Играть</span>
+          </button>
+        </div>
       </footer>
     </div>
 
@@ -98,8 +110,17 @@
           </button>
         </div>
         <div class="settings-modal-body">
-          <label class="field-label" for="ramSlider">Оперативная память: <span id="ramLabel">4</span> GB</label>
-          <input type="range" id="ramSlider" min="2" max="8" step="1" value="4" />
+          <div class="settings-install-section">
+            <p class="field-label">Папки установки</p>
+            <p class="settings-hint">Для каждой игры можно указать свою папку. Java всегда хранится в данных лаунчера.</p>
+            <div id="installPathsList" class="install-paths-list"></div>
+          </div>
+          <div class="settings-divider"></div>
+          <div class="settings-danger-zone">
+            <p class="field-label">Данные лаунчера</p>
+            <p class="settings-hint">Удалит скачанные Java, клиенты (включая пользовательские папки), кэш и настройки.</p>
+            <button type="button" id="clearDataBtn" class="btn btn-danger">Очистка данных</button>
+          </div>
         </div>
         <div class="settings-modal-footer">
           <button type="button" id="settingsSaveBtn" class="btn btn-primary">Сохранить</button>

@@ -1,5 +1,5 @@
 use crate::install::VersionDetails;
-use crate::profile::game_root;
+use crate::profile::launcher_root;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -20,9 +20,15 @@ pub fn is_game_running() -> bool {
     GAME_RUNNING.load(Ordering::SeqCst)
 }
 
-pub fn pick_launch_server(bootstrap: &Value) -> Option<(String, u16)> {
+pub fn pick_launch_server(
+    bootstrap: &Value,
+    game_id: &str,
+    server_id: Option<&str>,
+) -> Option<(String, u16)> {
     #[derive(Deserialize)]
     struct ServerEntry {
+        #[serde(default)]
+        id: Option<String>,
         host: String,
         #[serde(default)]
         port: Option<u16>,
@@ -31,27 +37,46 @@ pub fn pick_launch_server(bootstrap: &Value) -> Option<(String, u16)> {
     #[derive(Deserialize)]
     struct GameEntry {
         #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
         servers: Vec<ServerEntry>,
     }
+
+    let mut servers: Vec<ServerEntry> = Vec::new();
 
     if let Some(games) = bootstrap.get("games").and_then(|value| value.as_array()) {
         for game in games {
             if let Ok(parsed) = serde_json::from_value::<GameEntry>(game.clone()) {
-                if let Some(server) = parsed.servers.into_iter().find(|s| !s.host.trim().is_empty())
-                {
-                    return Some((server.host, server.port.unwrap_or(25565)));
+                if parsed.id.as_deref().unwrap_or("minecraft") != game_id {
+                    continue;
+                }
+                servers = parsed.servers;
+                break;
+            }
+        }
+    }
+
+    if servers.is_empty() {
+        if let Some(list) = bootstrap.get("servers").and_then(|value| value.as_array()) {
+            for server in list {
+                if let Ok(parsed) = serde_json::from_value::<ServerEntry>(server.clone()) {
+                    servers.push(parsed);
                 }
             }
         }
     }
 
-    if let Some(servers) = bootstrap.get("servers").and_then(|value| value.as_array()) {
-        for server in servers {
-            if let Ok(parsed) = serde_json::from_value::<ServerEntry>(server.clone()) {
-                if !parsed.host.trim().is_empty() {
-                    return Some((parsed.host, parsed.port.unwrap_or(25565)));
-                }
+    if let Some(id) = server_id.map(str::trim).filter(|value| !value.is_empty()) {
+        for server in &servers {
+            if server.id.as_deref() == Some(id) && !server.host.trim().is_empty() {
+                return Some((server.host.clone(), server.port.unwrap_or(25565)));
             }
+        }
+    }
+
+    for server in servers {
+        if !server.host.trim().is_empty() {
+            return Some((server.host, server.port.unwrap_or(25565)));
         }
     }
 
@@ -85,7 +110,7 @@ pub fn offline_uuid(username: &str) -> String {
 
 fn log_line(message: &str) {
     let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
-        let path = game_root().join("launcher.log");
+        let path = launcher_root().join("launcher.log");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -252,13 +277,14 @@ pub fn launch_game(
     username: &str,
     version: &str,
     ram_gb: u32,
+    install_root: &Path,
     server: Option<&(String, u16)>,
 ) -> Result<(), String> {
     if is_game_running() {
         return Err("Игра уже запущена".to_string());
     }
 
-    let root = game_root();
+    let root = install_root.to_path_buf();
     let assets_dir = root.join("assets");
     let game_dir = root.join("instances").join("default");
     let natives = root.join("natives");
@@ -311,6 +337,8 @@ pub fn launch_game(
         let mut jvm_args = resolve_args(arguments.jvm.as_ref(), &vars, &features);
         if jvm_args.is_empty() {
             jvm_args = legacy_jvm_args(&natives_str, classpath);
+        } else {
+            jvm_args = merge_jvm_args(&natives_str, classpath, jvm_args);
         }
         for arg in &jvm_args {
             cmd.arg(arg);
@@ -400,6 +428,35 @@ fn legacy_jvm_args(natives: &str, classpath: &str) -> Vec<String> {
         "-cp".to_string(),
         classpath.to_string(),
     ]
+}
+
+fn merge_jvm_args(natives: &str, classpath: &str, extra: Vec<String>) -> Vec<String> {
+    let has_cp = extra
+        .iter()
+        .any(|arg| arg == "-cp" || arg == "--classpath");
+    if has_cp {
+        let mut merged = extra;
+        prepend_native_jvm_props(&mut merged, natives);
+        return merged;
+    }
+
+    let mut merged = legacy_jvm_args(natives, classpath);
+    merged.extend(extra);
+    merged
+}
+
+fn prepend_native_jvm_props(args: &mut Vec<String>, natives: &str) {
+    let props = [
+        format!("-Djava.library.path={natives}"),
+        format!("-Djna.tmpdir={natives}"),
+        format!("-Dorg.lwjgl.system.SharedLibraryExtractPath={natives}"),
+        format!("-Dio.netty.native.workdir={natives}"),
+    ];
+    for prop in props.into_iter().rev() {
+        if !args.iter().any(|arg| arg == &prop) {
+            args.insert(0, prop);
+        }
+    }
 }
 
 fn legacy_game_args(

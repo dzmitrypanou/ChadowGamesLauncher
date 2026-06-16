@@ -1,45 +1,54 @@
 # Build full Minecraft client ZIP for chadow.ru/admin/minecraft upload.
-# Structure: versions/{version}/, libraries/, assets/, mods/
+# Structure: versions/{version}/, libraries/, assets/  (+ optional mods/)
 param(
     [string]$Version = "1.21.11",
     [string]$SourceRoot = "$env:APPDATA\ChadowGamesLauncher",
     [string]$OutDir = "$PSScriptRoot\..\dist",
-    [switch]$SkipModBuild
+    [switch]$SkipModBuild,
+    [switch]$Vanilla
 )
 
 $ErrorActionPreference = "Stop"
 $Root = Resolve-Path "$PSScriptRoot\.."
 $ModDir = Join-Path $Root "client-mod"
-$ZipName = "minecraft-$Version-client.zip"
+$ZipName = if ($Vanilla) { "minecraft-$Version-client-vanilla.zip" } else { "minecraft-$Version-client.zip" }
 $ZipPath = Join-Path $OutDir $ZipName
 $Staging = Join-Path $env:TEMP "chadow-full-client-staging"
 
 function Write-Step($msg) { Write-Host "==> $msg" }
 
-if (-not $SkipModBuild) {
-    Write-Step "Building Fabric mod..."
-    Push-Location $ModDir
-    try {
-        & .\gradlew.bat build --no-daemon -q
-        if ($LASTEXITCODE -ne 0) { throw "Gradle build failed" }
-    } finally {
-        Pop-Location
-    }
+function Get-VanillaVersionJsonText([string]$McVersion) {
+    $manifest = Invoke-RestMethod "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
+    $entry = $manifest.versions | Where-Object { $_.id -eq $McVersion } | Select-Object -First 1
+    if (-not $entry) { throw "Version $McVersion not found in Mojang manifest" }
+    return (Invoke-WebRequest -Uri $entry.url -UseBasicParsing).Content
 }
 
-$ModJar = Get-ChildItem (Join-Path $ModDir "build\libs") -Filter "chadow-games-client-*.jar" |
-    Where-Object { $_.Name -notmatch "sources" } |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
-if (-not $ModJar) { throw "Mod JAR not found. Run without -SkipModBuild first." }
+if (-not $Vanilla) {
+    if (-not $SkipModBuild) {
+        Write-Step "Building Fabric mod..."
+        Push-Location $ModDir
+        try {
+            & .\gradlew.bat build --no-daemon -q
+            if ($LASTEXITCODE -ne 0) { throw "Gradle build failed" }
+        } finally {
+            Pop-Location
+        }
+    }
+
+    $ModJar = Get-ChildItem (Join-Path $ModDir "build\libs") -Filter "chadow-games-client-*.jar" |
+        Where-Object { $_.Name -notmatch "sources" } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if (-not $ModJar) { throw "Mod JAR not found. Run without -SkipModBuild first." }
+}
 
 $VersionDir = Join-Path $SourceRoot "versions\$Version"
 $JarPath = Join-Path $VersionDir "$Version.jar"
-$JsonPath = Join-Path $VersionDir "$Version.json"
 $LibrariesDir = Join-Path $SourceRoot "libraries"
 $AssetsDir = Join-Path $SourceRoot "assets"
 
-foreach ($path in @($JarPath, $JsonPath, $LibrariesDir, $AssetsDir)) {
+foreach ($path in @($JarPath, $LibrariesDir, $AssetsDir)) {
     if (-not (Test-Path $path)) {
         throw "Missing: $path`nInstall Minecraft $Version via the launcher first, then re-run this script."
     }
@@ -49,22 +58,44 @@ Write-Step "Staging client files from $SourceRoot ..."
 if (Test-Path $Staging) { Remove-Item $Staging -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $Staging | Out-Null
 
-$targets = @(
-    @{ Src = Join-Path $SourceRoot "versions\$Version"; Dst = Join-Path $Staging "versions\$Version" },
-    @{ Src = $LibrariesDir; Dst = Join-Path $Staging "libraries" },
-    @{ Src = $AssetsDir; Dst = Join-Path $Staging "assets" }
-)
+$versionStaging = Join-Path $Staging "versions\$Version"
+New-Item -ItemType Directory -Force -Path $versionStaging | Out-Null
+Copy-Item $JarPath (Join-Path $versionStaging "$Version.jar") -Force
 
-foreach ($t in $targets) {
-    Write-Host "    copy $($t.Src) ..."
-    & robocopy $t.Src $t.Dst /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
-    if ($LASTEXITCODE -ge 8) { throw "robocopy failed for $($t.Src)" }
+if ($Vanilla) {
+    Write-Step "Fetching vanilla version.json from Mojang..."
+    $vanillaJson = Get-VanillaVersionJsonText $Version
+    [IO.File]::WriteAllText((Join-Path $versionStaging "$Version.json"), $vanillaJson)
+} else {
+    $JsonPath = Join-Path $VersionDir "$Version.json"
+    if (-not (Test-Path $JsonPath)) { throw "Missing: $JsonPath" }
+    Copy-Item $JsonPath (Join-Path $versionStaging "$Version.json") -Force
 }
 
-$ModsStaging = Join-Path $Staging "mods"
-New-Item -ItemType Directory -Force -Path $ModsStaging | Out-Null
-Copy-Item $ModJar.FullName (Join-Path $ModsStaging $ModJar.Name) -Force
-Write-Host "    added mod: $($ModJar.Name)"
+Write-Host "    copy libraries ..."
+& robocopy $LibrariesDir (Join-Path $Staging "libraries") /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "robocopy failed for libraries" }
+
+if ($Vanilla) {
+    $fabricLibs = Join-Path $Staging "libraries\net\fabricmc"
+    if (Test-Path $fabricLibs) {
+        Remove-Item $fabricLibs -Recurse -Force
+        Write-Host "    removed Fabric libraries from staging"
+    }
+}
+
+Write-Host "    copy assets ..."
+& robocopy $AssetsDir (Join-Path $Staging "assets") /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "robocopy failed for assets" }
+
+if (-not $Vanilla) {
+    $ModsStaging = Join-Path $Staging "mods"
+    New-Item -ItemType Directory -Force -Path $ModsStaging | Out-Null
+    Copy-Item $ModJar.FullName (Join-Path $ModsStaging $ModJar.Name) -Force
+    Write-Host "    added mod: $($ModJar.Name)"
+} else {
+    Write-Host "    vanilla build: no mods/"
+}
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
@@ -92,9 +123,8 @@ Write-Host "Done!"
 Write-Host "  File:   $ZipPath"
 Write-Host "  Size:   $SizeMb MB ($Size bytes)"
 Write-Host "  SHA256: $Hash"
+Write-Host "  Type:   $(if ($Vanilla) { 'vanilla (no mod, no Fabric)' } else { 'with mod' })"
 Write-Host ""
 Write-Host "Upload at https://chadow.ru/admin/minecraft"
 Write-Host "  Version: $Version"
 Write-Host "  ZIP:     $ZipName"
-Write-Host ""
-Write-Host "After upload the launcher will download this archive automatically via bootstrap API."

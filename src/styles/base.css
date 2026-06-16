@@ -49,5 +49,5 @@ body::before {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 16px 20px 18px;
+  padding: 14px 20px 16px;
 }

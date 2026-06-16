@@ -9,13 +9,17 @@ use install::{collect_classpath, ensure_java, ensure_minecraft, ClientPack};
 use launch::{is_game_running, launch_game, pick_launch_server};
 use ping::PingResult;
 use profile::{
-    cache_bootstrap as persist_bootstrap_cache, ensure_dirs, game_root,
+    cache_bootstrap as persist_bootstrap_cache, clear_all_data as wipe_launcher_data,
+    ensure_dirs, ensure_game_install_dirs, game_install_path_info,
     load_cached_bootstrap as read_bootstrap_cache, load_profile as read_profile,
-    save_profile as write_profile, Profile,
+    save_profile as write_profile, set_game_install_path, GameInstallPathInfo, Profile,
 };
 use serde_json::Value;
 use tauri::AppHandle;
 use tauri::Emitter;
+
+const DEFAULT_RAM_GB: u32 = 4;
+const MINECRAFT_GAME_ID: &str = "minecraft";
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +45,19 @@ fn load_profile() -> Profile {
 #[tauri::command]
 fn save_profile(profile: Profile) -> Result<(), String> {
     write_profile(&profile)
+}
+
+#[tauri::command]
+fn get_game_install_path(game_id: String) -> GameInstallPathInfo {
+    game_install_path_info(&game_id)
+}
+
+#[tauri::command]
+fn set_game_install_path_cmd(game_id: String, path: Option<String>) -> Result<(), String> {
+    if is_game_running() {
+        return Err("Закройте игру перед сменой папки установки".to_string());
+    }
+    set_game_install_path(&game_id, path)
 }
 
 #[tauri::command]
@@ -72,7 +89,8 @@ fn game_is_running() -> bool {
 async fn prepare_and_launch(
     app: AppHandle,
     nickname: String,
-    ram_gb: u32,
+    game_id: String,
+    server_id: Option<String>,
     bootstrap: Value,
 ) -> Result<LaunchResult, String> {
     let config: BootstrapInput = serde_json::from_value(bootstrap.clone()).map_err(|e| e.to_string())?;
@@ -80,7 +98,12 @@ async fn prepare_and_launch(
         return Err("Лаунчер отключён администратором".to_string());
     }
 
+    if game_id != MINECRAFT_GAME_ID {
+        return Err("Эта игра пока не поддерживается".to_string());
+    }
+
     ensure_dirs()?;
+    let install_root = ensure_game_install_dirs(&game_id)?;
 
     let emit = |percent: u8, message: &str| {
         let _ = app.emit(
@@ -95,13 +118,19 @@ async fn prepare_and_launch(
     emit(42, "Подготовка Minecraft…");
     let version = config.minecraft_version.clone();
     let client_pack = config.client_pack.as_ref();
-    let (_jar, details) =
-        ensure_minecraft(&app, &version, client_pack, |p, m| emit(p, m)).await?;
+    let (_jar, details) = ensure_minecraft(
+        &app,
+        &install_root,
+        &version,
+        client_pack,
+        |p, m| emit(p, m),
+    )
+    .await?;
 
-    let classpath = collect_classpath(&game_root(), &version, &details.libraries)?;
+    let classpath = collect_classpath(&install_root, &version, &details.libraries)?;
     emit(100, "Запуск…");
 
-    let server = pick_launch_server(&bootstrap);
+    let server = pick_launch_server(&bootstrap, &game_id, server_id.as_deref());
 
     launch_game(
         &app,
@@ -110,11 +139,20 @@ async fn prepare_and_launch(
         &details,
         &nickname,
         &version,
-        ram_gb,
+        DEFAULT_RAM_GB,
+        &install_root,
         server.as_ref(),
     )?;
 
     Ok(LaunchResult { launched: true })
+}
+
+#[tauri::command]
+fn clear_all_data() -> Result<(), String> {
+    if is_game_running() {
+        return Err("Закройте игру перед очисткой данных".to_string());
+    }
+    wipe_launcher_data()
 }
 
 #[tauri::command]
@@ -129,15 +167,19 @@ fn open_url(url: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             load_profile,
             save_profile,
+            get_game_install_path,
+            set_game_install_path_cmd,
             cache_bootstrap,
             load_cached_bootstrap,
             fetch_bootstrap,
             ping_server,
             game_is_running,
             prepare_and_launch,
+            clear_all_data,
             open_url,
         ])
         .run(tauri::generate_context!())

@@ -1,4 +1,4 @@
-use crate::install::{download_file_resumable, http_client, read_version_details, VersionDetails};
+use crate::install::{download_file_resumable, http_client, maven_library_path, read_version_details, VersionDetails};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -76,13 +76,6 @@ pub async fn ensure_fabric_loader(
 ) -> Result<VersionDetails, String> {
     let version_dir = root.join("versions").join(version);
     let json_path = version_dir.join(format!("{version}.json"));
-    if json_path.exists() {
-        if let Ok(existing) = read_version_details(&json_path) {
-            if existing.main_class.contains("KnotClient") {
-                return Ok(existing);
-            }
-        }
-    }
 
     let profile_url = format!(
         "https://meta.fabricmc.net/v2/versions/loader/{version}/{loader_version}/profile/json"
@@ -96,20 +89,29 @@ pub async fn ensure_fabric_loader(
         .await
         .map_err(|e| e.to_string())?;
 
-    let inherits = fabric.inherits_from.as_deref().unwrap_or(version);
-    let vanilla_json = fetch_vanilla_version_json(inherits).await?;
-    let merged = merge_profiles(version, &fabric, &vanilla_json)?;
+    let fabric_ready = fabric_loader_jar_path(root, loader_version).exists();
+    let needs_profile_merge = if json_path.exists() {
+        read_version_details(&json_path)
+            .map(|details| fabric_profile_needs_refresh(&details))
+            .unwrap_or(true)
+    } else {
+        true
+    };
 
-    let version_dir = root.join("versions").join(version);
-    fs::create_dir_all(&version_dir).map_err(|e| e.to_string())?;
-    let json_path = version_dir.join(format!("{version}.json"));
-    fs::write(
-        &json_path,
-        serde_json::to_string_pretty(&merged).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())?;
+    if needs_profile_merge {
+        let inherits = fabric.inherits_from.as_deref().unwrap_or(version);
+        let vanilla_json = fetch_vanilla_version_json(inherits).await?;
+        let merged = merge_profiles(version, &fabric, &vanilla_json)?;
 
-    let _details: VersionDetails = serde_json::from_value(merged).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&version_dir).map_err(|e| e.to_string())?;
+        fs::write(
+            &json_path,
+            serde_json::to_string_pretty(&merged).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+    } else if !fabric_ready {
+        log_fabric_line("Fabric profile present but libraries missing, resuming download");
+    }
 
     install_fabric_libraries(app, root, &fabric).await?;
 
@@ -160,7 +162,7 @@ fn merge_profiles(version: &str, fabric: &FabricProfile, vanilla: &Value) -> Res
         obj.insert("id".to_string(), json!(version));
         obj.insert("mainClass".to_string(), json!(fabric.main_class));
         if let Some(args) = &fabric.arguments {
-            obj.insert("arguments".to_string(), args.clone());
+            obj.insert("arguments".to_string(), merge_arguments(vanilla, args));
         }
 
         let mut libs = vanilla
@@ -194,45 +196,107 @@ fn merge_profiles(version: &str, fabric: &FabricProfile, vanilla: &Value) -> Res
     Ok(merged)
 }
 
+fn merge_arguments(vanilla: &Value, fabric_args: &Value) -> Value {
+    let mut merged = vanilla
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({ "jvm": [], "game": [] }));
+
+    let Some(merged_obj) = merged.as_object_mut() else {
+        return merged;
+    };
+    let Some(fabric_obj) = fabric_args.as_object() else {
+        return merged;
+    };
+
+    if let Some(fabric_jvm) = fabric_obj.get("jvm").and_then(|v| v.as_array()) {
+        let mut jvm = merged_obj
+            .get("jvm")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        for item in fabric_jvm {
+            jvm.push(item.clone());
+        }
+        merged_obj.insert("jvm".to_string(), json!(jvm));
+    }
+
+    if let Some(fabric_game) = fabric_obj.get("game").and_then(|v| v.as_array()) {
+        if !fabric_game.is_empty() {
+            merged_obj.insert("game".to_string(), json!(fabric_game));
+        }
+    }
+
+    merged
+}
+
+fn fabric_profile_needs_refresh(details: &VersionDetails) -> bool {
+    if !details.main_class.contains("KnotClient") {
+        return true;
+    }
+    details
+        .arguments
+        .as_ref()
+        .and_then(|args| args.game.as_ref())
+        .map(|game| game.is_empty())
+        .unwrap_or(true)
+}
+
+fn fabric_loader_jar_path(root: &Path, loader_version: &str) -> PathBuf {
+    maven_library_path(root, &format!("net.fabricmc:fabric-loader:{loader_version}"))
+        .unwrap_or_else(|| {
+            root.join("libraries")
+                .join("net/fabricmc/fabric-loader")
+                .join(loader_version)
+                .join(format!("fabric-loader-{loader_version}.jar"))
+        })
+}
+
+fn log_fabric_line(message: &str) {
+    let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
+        let path = crate::profile::launcher_root().join("launcher.log");
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+        writeln!(file, "{message}")?;
+        Ok(())
+    })();
+}
+
 async fn install_fabric_libraries(
     app: Option<&AppHandle>,
     root: &Path,
     fabric: &FabricProfile,
 ) -> Result<(), String> {
     for lib in &fabric.libraries {
-        let parts: Vec<&str> = lib.name.split(':').collect();
-        if parts.len() < 3 {
+        let Some(dest) = maven_library_path(root, &lib.name) else {
             continue;
-        }
-        let (group, artifact, version) = (parts[0], parts[1], parts[2]);
-        let file_name = if parts.len() > 3 {
-            format!("{artifact}-{}-{}.jar", parts[2], parts[3..].join("-"))
-        } else {
-            format!("{artifact}-{version}.jar")
         };
-        let rel = format!("{}/{}/{}/{}", group.replace('.', "/"), artifact, version, file_name);
-        let dest = root.join("libraries").join(&rel);
         if dest.exists() {
             continue;
         }
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
+        let rel = dest
+            .strip_prefix(root.join("libraries"))
+            .map_err(|e| e.to_string())?
+            .to_string_lossy()
+            .replace('\\', "/");
         let base = lib
             .url
             .as_deref()
             .unwrap_or("https://libraries.minecraft.net/");
-        let url = if base.ends_with('/') {
+        let download_url = if base.ends_with('/') {
             format!("{base}{rel}")
         } else {
             format!("{base}/{rel}")
         };
-        let maven_url = if lib.url.as_deref() == Some("https://maven.fabricmc.net/") {
-            format!("https://maven.fabricmc.net/{group}/{artifact}/{version}/{file_name}")
-        } else {
-            url
-        };
-        download_file_resumable(app, &maven_url, &dest, 0, 0, "", None, None).await?;
+        let label = format!("Fabric: {}", lib.name.rsplit(':').next().unwrap_or("lib"));
+        download_file_resumable(app, &download_url, &dest, 95, 98, &label, None, None).await?;
     }
     Ok(())
 }
