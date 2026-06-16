@@ -1,6 +1,5 @@
 package ru.chadow.games.client.mixin;
 
-import com.mojang.blaze3d.platform.Window;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.PauseScreen;
@@ -21,9 +20,6 @@ public abstract class MinecraftMixin {
     public Screen screen;
 
     @Shadow
-    public Window window;
-
-    @Shadow
     public abstract void setScreen(Screen screen);
 
     @Inject(method = "tick", at = @At("HEAD"))
@@ -40,31 +36,16 @@ public abstract class MinecraftMixin {
         }
 
         ci.cancel();
-        ChadowGamesClientMod.requestQuit();
-        ((Minecraft) (Object) this).stop();
-    }
 
-    @Inject(method = "stop", at = @At("HEAD"), cancellable = true)
-    private void chadow$guardStop(CallbackInfo ci) {
+        if (this.level != null) {
+            if (!(this.screen instanceof PauseScreen)) {
+                this.setScreen(new PauseScreen(false));
+            }
+            return;
+        }
+
         if (ChadowGamesClientMod.consumeQuitRequest()) {
-            return;
-        }
-
-        if (this.window != null && this.window.shouldClose()) {
-            return;
-        }
-
-        ci.cancel();
-
-        if (this.level != null && this.screen == null) {
-            this.setScreen(new PauseScreen(false));
-        }
-    }
-
-    @Inject(method = "pauseGame", at = @At("RETURN"))
-    private void chadow$ensurePauseOpened(boolean pauseOnly, CallbackInfo ci) {
-        if (this.level != null && this.screen == null) {
-            this.setScreen(new PauseScreen(pauseOnly));
+            ((Minecraft) (Object) this).stop();
         }
     }
 }

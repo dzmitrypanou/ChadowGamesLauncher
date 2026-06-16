@@ -25,9 +25,6 @@ public abstract class DisconnectedScreenMixin {
             if (ChadowGamesClientMod.isReportButtonLabel(text)) {
                 continue;
             }
-            if (!ChadowGamesClientMod.isLobbyNavigationLabel(text)) {
-                continue;
-            }
 
             ((ButtonAccessor) button).chadow$setOnPress(btn -> {
                 ChadowGamesClientMod.requestQuit();
