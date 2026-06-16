@@ -1,6 +1,6 @@
 # Chadow Games Launcher
 
-Десктоп-лаунчер Minecraft Java Edition для проекта [CHADOW](https://chadow.ru). 
+Десктоп-лаунчер Minecraft Java Edition для проекта [CHADOW](https://github.com/dzmitrypanou/CHADOW). 
 
 Собран на Tauri 2 (Rust + Vite), UI в фирменном стиле chadow.ru.
 
