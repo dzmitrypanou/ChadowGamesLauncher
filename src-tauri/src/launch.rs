@@ -292,19 +292,12 @@ fn write_display_config(
     work_area: (i32, i32, u32, u32),
 ) -> Result<(), String> {
     let path = game_dir.join(DISPLAY_CONFIG_FILE);
-    match display_mode {
-        DisplayMode::Fullscreen => {
-            let (x, y, width, height) = work_area;
-            std::fs::write(path, format!("borderless {x} {y} {width} {height}"))
-                .map_err(|e| e.to_string())
-        }
-        DisplayMode::Windowed => {
-            if path.exists() {
-                std::fs::remove_file(path).map_err(|e| e.to_string())?;
-            }
-            Ok(())
-        }
-    }
+    let (x, y, width, height) = work_area;
+    let mode = match display_mode {
+        DisplayMode::Fullscreen => "borderless",
+        DisplayMode::Windowed => "windowed",
+    };
+    std::fs::write(path, format!("{mode} {x} {y} {width} {height}")).map_err(|e| e.to_string())
 }
 
 fn set_game_option(lines: &mut Vec<String>, key: &str, value: &str) {
@@ -436,7 +429,7 @@ pub fn launch_game(
     write_display_config(&game_dir, display_mode, work_area)?;
     apply_display_options(&game_dir, window_size.0, window_size.1)?;
     log_line(&format!(
-        "Display mode: {}, work area: {}x{} at ({}, {})",
+        "Display mode: {}, layout: {}x{} at ({}, {})",
         if display_mode == DisplayMode::Fullscreen {
             "borderless"
         } else {

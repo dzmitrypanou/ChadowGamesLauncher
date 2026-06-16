@@ -51,12 +51,22 @@ public abstract class WindowMixin {
     }
 
     @Inject(method = "<init>", at = @At("TAIL"))
-    private void chadow$applyBorderless(CallbackInfo ci) {
+    private void chadow$applyDisplayLayout(CallbackInfo ci) {
         BorderlessWindow.Spec spec = BorderlessWindow.readSpec();
-        if (spec == null) {
-            return;
+        if (spec != null) {
+            this.chadow$applyLayout(spec);
         }
+    }
 
+    @Inject(method = "setMode", at = @At("TAIL"))
+    private void chadow$guardDisplayLayout(CallbackInfo ci) {
+        BorderlessWindow.Spec spec = BorderlessWindow.readSpec();
+        if (spec != null) {
+            this.chadow$applyLayout(spec);
+        }
+    }
+
+    private void chadow$applyLayout(BorderlessWindow.Spec spec) {
         this.fullscreen = false;
         this.actuallyFullscreen = false;
         this.windowedX = spec.x();
@@ -68,7 +78,12 @@ public abstract class WindowMixin {
         this.width = spec.width();
         this.height = spec.height();
 
-        GLFW.glfwSetWindowAttrib(this.handle, GLFW.GLFW_DECORATED, GLFW.GLFW_FALSE);
+        if (spec.mode() == BorderlessWindow.Mode.BORDERLESS) {
+            GLFW.glfwSetWindowAttrib(this.handle, GLFW.GLFW_DECORATED, GLFW.GLFW_FALSE);
+        } else {
+            GLFW.glfwSetWindowAttrib(this.handle, GLFW.GLFW_DECORATED, GLFW.GLFW_TRUE);
+        }
+
         GLFW.glfwSetWindowMonitor(this.handle, 0L, spec.x(), spec.y(), spec.width(), spec.height(), -1);
         this.refreshFramebufferSize();
     }
