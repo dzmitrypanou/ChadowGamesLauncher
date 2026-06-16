@@ -5,6 +5,8 @@
   "client": [
     "MinecraftMixin",
     "InGameHudMixin",
+    "ButtonAccessor",
+    "PauseScreenMixin",
     "DisconnectedScreenMixin"
   ],
   "injectors": {

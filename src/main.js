@@ -46,8 +46,6 @@ const els = {
   statusHint: document.getElementById('statusHint'),
   progressWrap: document.getElementById('progressWrap'),
   progressFill: document.getElementById('progressFill'),
-  progressPercent: document.getElementById('progressPercent'),
-  progressText: document.getElementById('progressText'),
   playBtn: document.getElementById('playBtn'),
   playBtnLabel: document.getElementById('playBtnLabel'),
   settingsBtn: document.getElementById('settingsBtn'),
@@ -93,11 +91,13 @@ function setProgress(visible, percent = 0, text = '') {
     els.progressWrap.hidden = !visible;
   }
   if (els.progressFill) els.progressFill.style.width = `${pct}%`;
-  if (els.progressPercent) els.progressPercent.textContent = `${pct}%`;
-  if (els.progressText) els.progressText.textContent = message;
-  if (els.statusHint) els.statusHint.hidden = visible;
+  if (els.statusHint) {
+    els.statusHint.classList.toggle('status-hint--loading', visible);
+    els.statusHint.textContent = visible ? `${message} · ${pct}%` : '';
+    if (!visible) updateStatusHint();
+  }
 
-  const bar = els.progressWrap?.querySelector('.progress-bar');
+  const bar = els.progressWrap?.querySelector('.progress-strip-bar');
   if (bar) {
     bar.setAttribute('aria-valuenow', String(pct));
     bar.setAttribute('aria-valuetext', `${pct}% — ${message}`);
@@ -478,12 +478,8 @@ function setServerPingLoading(key) {
   card.classList.add('server-card--pending');
 
   const stats = card.querySelector('.server-card-stats');
-  const slots = card.querySelector('[data-field="slots"]');
-  const ping = card.querySelector('[data-field="ping"]');
   const status = card.querySelector('[data-field="status"]');
-  if (stats) stats.hidden = false;
-  if (slots) slots.textContent = '—';
-  if (ping) ping.textContent = '…';
+  if (stats) stats.hidden = true;
   if (status) status.textContent = 'проверка';
 }
 

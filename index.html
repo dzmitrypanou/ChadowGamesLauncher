@@ -80,18 +80,22 @@
       </main>
 
       <footer class="launcher-footer">
-        <div class="progress-panel" id="progressWrap" hidden>
-          <div class="progress-head">
-            <span class="progress-title">Загрузка</span>
-            <span id="progressPercent" class="progress-percent mono">0%</span>
-          </div>
-          <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-            <div class="progress-fill" id="progressFill"></div>
-          </div>
-          <p id="progressText" class="progress-detail">Подготовка…</p>
-        </div>
         <div class="launcher-footer-row">
-          <p id="statusHint" class="status-hint">Выберите игру и введите никнейм</p>
+          <div class="footer-status">
+            <p id="statusHint" class="status-hint">Выберите игру и введите никнейм</p>
+            <div class="progress-strip" id="progressWrap" hidden>
+              <div
+                class="progress-strip-bar"
+                role="progressbar"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="0"
+                aria-label="Загрузка"
+              >
+                <div class="progress-strip-fill" id="progressFill"></div>
+              </div>
+            </div>
+          </div>
           <button type="button" id="playBtn" class="btn btn-primary btn-play" disabled>
             <span class="btn-play-icon" aria-hidden="true">▶</span>
             <span id="playBtnLabel">Играть</span>

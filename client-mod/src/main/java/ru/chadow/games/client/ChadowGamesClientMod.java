@@ -22,14 +22,8 @@ public final class ChadowGamesClientMod implements ClientModInitializer {
     }
 
     public static boolean shouldBlockScreen(net.minecraft.client.gui.screens.Screen screen) {
-        if (screen instanceof net.minecraft.client.gui.screens.PauseScreen) {
-            return true;
-        }
         if (screen instanceof net.minecraft.client.gui.screens.TitleScreen && inGameSession) {
             return true;
-        }
-        if (screen instanceof net.minecraft.client.gui.screens.DisconnectedScreen) {
-            return false;
         }
         return false;
     }
